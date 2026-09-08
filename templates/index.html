@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, user-scalable=no"
+    />
+    <title>Bus Arrivals</title>
+    <script src="https://unpkg.com/htmx.org@2"></script>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}"
+    />
+  </head>
+  <body>
+    <div
+      id="dashboard"
+      hx-get="/arrivals"
+      hx-trigger="load, every {{ refresh_seconds }}s"
+      hx-swap="innerHTML"
+    >
+      <p class="loading">Loading arrivals&hellip;</p>
+    </div>
+  </body>
+</html>

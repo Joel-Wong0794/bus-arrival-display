@@ -1,0 +1,77 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  background: #111;
+  color: #f5f5f5;
+  font-family: "Segoe UI", Arial, sans-serif;
+  overflow: hidden;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 8px;
+  height: 100vh;
+  padding: 8px;
+}
+
+.quadrant {
+  background: #1c1c1c;
+  border-radius: 12px;
+  padding: 12px 16px;
+  overflow: hidden;
+}
+
+.quadrant h2 {
+  font-size: 1.4rem;
+  margin-bottom: 8px;
+  color: #7fd3ff;
+}
+
+.services {
+  list-style: none;
+}
+
+.services li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 1.6rem;
+  padding: 4px 0;
+  border-bottom: 1px solid #333;
+}
+
+.service-no {
+  font-weight: bold;
+}
+
+.etas {
+  display: flex;
+  gap: 10px;
+}
+
+.eta {
+  color: #7fffa1;
+}
+
+.error,
+.empty,
+.loading {
+  font-size: 1.2rem;
+  color: #888;
+}
+
+.updated {
+  position: fixed;
+  bottom: 4px;
+  right: 8px;
+  font-size: 0.8rem;
+  color: #555;
+}

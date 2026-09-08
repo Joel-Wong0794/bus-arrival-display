@@ -1,0 +1,28 @@
+<div class="grid">
+  {% for stop in stops %}
+  <div class="quadrant">
+    <h2>{{ stop.name }}</h2>
+    {% if stop.error %}
+    <p class="error">{{ stop.error }}</p>
+    {% elif not stop.services %}
+    <p class="empty">No arrivals</p>
+    {% else %}
+    <ul class="services">
+      {% for service_no, etas in stop.services %}
+      <li>
+        <span class="service-no">{{ service_no }}</span>
+        <span class="etas">
+          {% for eta in etas %}
+          <span class="eta">{{ "Arr" if eta == 0 else eta ~ " min" }}</span>
+          {% else %}
+          <span class="eta">&mdash;</span>
+          {% endfor %}
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+<p class="updated">Updated {{ updated_at }}</p>
