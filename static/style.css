@@ -61,6 +61,12 @@ body {
   color: #7fffa1;
 }
 
+/* Anything inside the 1m30s "Arr" band — catch the eye from across the room. */
+.eta.arriving {
+  color: #ff5a5a;
+  font-weight: bold;
+}
+
 .error,
 .empty,
 .loading {

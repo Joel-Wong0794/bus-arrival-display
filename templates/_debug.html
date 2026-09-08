@@ -1,0 +1,39 @@
+<h1>Arrivals debug</h1>
+<p>Server now: <code>{{ now }}</code> &mdash; all rows measured against this instant.</p>
+<p>
+  Safety buffer: <code>{{ buffer_seconds }}s</code> shaved off every ETA, so
+  &ldquo;Displayed&rdquo; is deliberately lower than &ldquo;Exact minutes&rdquo;.
+</p>
+<p>
+  <code>Monitored=0</code> means DataMall derived the estimate from the schedule
+  rather than a live vehicle position, so it can legitimately differ from another
+  app by minutes.
+</p>
+
+{% for stop in stops %}
+<h2>{{ stop.name }} ({{ stop.code }})</h2>
+{% if stop.error %}
+<p>{{ stop.error }}</p>
+{% elif not stop.services %}
+<p>No arrivals</p>
+{% else %}
+<table border="1" cellpadding="4" cellspacing="0">
+  <tr>
+    <th>Service</th>
+    <th>EstimatedArrival (raw)</th>
+    <th>Monitored</th>
+    <th>Exact minutes</th>
+    <th>Displayed</th>
+  </tr>
+  {% for service_no, buses in stop.services %}{% for bus in buses %}
+  <tr>
+    <td>{{ service_no }}</td>
+    <td><code>{{ bus.raw }}</code></td>
+    <td>{{ bus.monitored }}</td>
+    <td>{{ "%.2f"|format(bus.exact_minutes) }}</td>
+    <td>{{ "Arr" if bus.minutes == 0 else bus.minutes ~ " min" }}</td>
+  </tr>
+  {% endfor %}{% endfor %}
+</table>
+{% endif %}
+{% endfor %}

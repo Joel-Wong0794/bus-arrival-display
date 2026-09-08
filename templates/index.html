@@ -17,10 +17,38 @@
     <div
       id="dashboard"
       hx-get="/arrivals"
-      hx-trigger="load, every {{ refresh_seconds }}s"
+      hx-trigger="load, every {{ refresh_seconds }}s, refresh"
       hx-swap="innerHTML"
     >
       <p class="loading">Loading arrivals&hellip;</p>
     </div>
+    <script>
+      // The server bakes in a minute count at fetch time; age it down locally so
+      // the tile is never stale between polls (or while Android throttles them).
+      // Must match BUFFER_SECONDS on the server, or the number would jump every
+      // time htmx swaps in a freshly-rendered fragment.
+      var BUFFER_MS = {{ buffer_seconds }} * 1000;
+      function tickEtas() {
+        var now = Date.now();
+        // Indexed loop, not NodeList.forEach — the kiosk WebView is old.
+        var els = document.querySelectorAll(".eta[data-arrival]");
+        for (var i = 0; i < els.length; i++) {
+          // Math.floor, mirroring the server's int(seconds // 60).
+          var mins = Math.floor(
+            (els[i].getAttribute("data-arrival") - now - BUFFER_MS) / 60000
+          );
+          var arriving = mins <= 0;
+          els[i].textContent = arriving ? "Arr" : mins + " min";
+          // className, not classList — the kiosk WebView is old.
+          els[i].className = arriving ? "eta arriving" : "eta";
+        }
+      }
+      setInterval(tickEtas, 1000);
+      document.body.addEventListener("htmx:afterSwap", tickEtas);
+      // Waking the tablet resumes a throttled poll timer only on its next tick.
+      document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) htmx.trigger("#dashboard", "refresh");
+      });
+    </script>
   </body>
 </html>

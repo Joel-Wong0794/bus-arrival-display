@@ -8,12 +8,16 @@
     <p class="empty">No arrivals</p>
     {% else %}
     <ul class="services">
-      {% for service_no, etas in stop.services %}
+      {% for service_no, buses in stop.services %}
       <li>
         <span class="service-no">{{ service_no }}</span>
         <span class="etas">
-          {% for eta in etas %}
-          <span class="eta">{{ "Arr" if eta == 0 else eta ~ " min" }}</span>
+          {% for bus in buses %}
+          <span
+            class="eta{{ ' arriving' if bus.minutes == 0 else '' }}"
+            data-arrival="{{ bus.arrival_ms }}"
+            >{{ "Arr" if bus.minutes == 0 else bus.minutes ~ " min" }}</span
+          >
           {% else %}
           <span class="eta">&mdash;</span>
           {% endfor %}
