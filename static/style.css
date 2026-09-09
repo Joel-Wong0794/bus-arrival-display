@@ -60,8 +60,11 @@ body {
   justify-content: space-between;
   align-items: baseline;
   font-size: 1.6rem;
-  padding: 4px 0;
-  border-bottom: 1px solid #333;
+  padding: 10px 12px;
+  background: #252525;
+  border: 1px solid #333;
+  border-radius: 8px;
+  margin-bottom: 8px;
 }
 
 .service-no {
