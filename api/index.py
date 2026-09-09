@@ -48,11 +48,6 @@ MAP_WINDOW_MINUTES = int(os.environ.get("MAP_WINDOW_MINUTES", "5"))
 
 LOAD_LABELS = {"SEA": "Seats", "SDA": "Standing", "LSD": "Limited"}
 
-COMPASS_POINTS = [
-    "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
-    "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
-]
-
 stop_codes = os.environ["BUS_STOP_CODES"].split(",")
 stop_names = os.environ.get("BUS_STOP_NAMES", "").split(",")
 # Pair each stop code with a display name, falling back to the code itself.
@@ -90,22 +85,13 @@ def bus_location(next_bus: dict) -> dict:
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Straight-line distance in metres. Not road distance — a bus 400m away by
-    air can be 2km by road, so the display calls this "direct"."""
+    air can be 2km by road."""
     radius = 6371000
     p1, p2 = math.radians(lat1), math.radians(lat2)
     dp = math.radians(lat2 - lat1)
     dl = math.radians(lon2 - lon1)
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * radius * math.asin(math.sqrt(a))
-
-
-def bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Initial compass bearing from point 1 to point 2, in degrees from north."""
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dl = math.radians(lon2 - lon1)
-    y = math.sin(dl) * math.cos(p2)
-    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
-    return (math.degrees(math.atan2(y, x)) + 360) % 360
 
 
 def format_distance(metres: float) -> str:
@@ -195,6 +181,7 @@ def collect_map_buses(stops_data: list[dict]) -> list[dict]:
                 row = {
                     "service_no": service_no,
                     "stop_name": stop["name"],
+                    "stop_code": stop["code"],
                     # Identifies one vehicle across refreshes, so a marker can be
                     # moved rather than destroyed — which would shut its popup.
                     "key": f"{stop['code']}|{service_no}|{rank}",
@@ -203,15 +190,11 @@ def collect_map_buses(stops_data: list[dict]) -> list[dict]:
                     "lat": bus["lat"],
                     "lon": bus["lon"],
                     "distance": None,
-                    "compass": None,
-                    "bearing": None,
                 }
                 if bus["lat"] is not None:
-                    metres = haversine_m(*HOME, bus["lat"], bus["lon"])
-                    bearing = bearing_deg(*HOME, bus["lat"], bus["lon"])
-                    row["distance"] = format_distance(metres)
-                    row["bearing"] = round(bearing)
-                    row["compass"] = COMPASS_POINTS[round(bearing / 22.5) % 16]
+                    row["distance"] = format_distance(
+                        haversine_m(*HOME, bus["lat"], bus["lon"])
+                    )
                 rows.append(row)
     rows.sort(key=lambda row: row["minutes"])
     return rows
