@@ -1,7 +1,6 @@
 import math
 import os
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote
 
 import requests
 from dotenv import load_dotenv
@@ -46,10 +45,6 @@ HOME = read_home()
 # Only buses arriving within this many minutes get plotted. The map answers
 # "should I leave now", so anything further out is noise.
 MAP_WINDOW_MINUTES = int(os.environ.get("MAP_WINDOW_MINUTES", "5"))
-
-# OneMap's embeddable map. Markers are passed in the URL, which sidesteps both a
-# tile-layer dependency and the same-origin wall around a cross-origin iframe.
-AMM_URL = "https://www.onemap.gov.sg/amm/amm.html"
 
 LOAD_LABELS = {"SEA": "Seats", "SDA": "Standing", "LSD": "Limited"}
 
@@ -196,10 +191,13 @@ def collect_map_buses(stops_data: list[dict]) -> list[dict]:
     rows = []
     for stop in stops_data:
         for service_no, buses in stop["services"]:
-            for bus in buses:
+            for rank, bus in enumerate(buses):
                 row = {
                     "service_no": service_no,
                     "stop_name": stop["name"],
+                    # Identifies one vehicle across refreshes, so a marker can be
+                    # moved rather than destroyed — which would shut its popup.
+                    "key": f"{stop['code']}|{service_no}|{rank}",
                     "minutes": bus["minutes"],
                     "load": bus["load"],
                     "lat": bus["lat"],
@@ -223,28 +221,6 @@ def eta_label(minutes: int) -> str:
     return "Arr" if minutes == 0 else f"{minutes} min"
 
 
-def build_map_url(buses: list[dict]) -> str:
-    """AMM renders whatever markers the URL carries, so the pins are built here
-    rather than drawn over the iframe — a cross-origin frame never reports where
-    it has been panned to, so an overlay would drift out of alignment."""
-    params = [
-        "mapStyle=Grey",
-        "zoomLevel=16",
-        "popupWidth=200",
-        f"marker=latLng:{HOME[0]},{HOME[1]}!icon:fa-home!colour:darkred",
-    ]
-    for bus in buses:
-        if bus["lat"] is None:
-            continue
-        colour = "red" if bus["minutes"] == 0 else "orange"
-        label = quote(f"{bus['service_no']} - {eta_label(bus['minutes'])}", safe="")
-        params.append(
-            f"marker=latLng:{bus['lat']},{bus['lon']}"
-            f"!icon:fa-bus!colour:{colour}!popupText:{label}"
-        )
-    return f"{AMM_URL}?{'&'.join(params)}"
-
-
 def map_context(now: datetime) -> dict:
     if HOME is None:
         return {
@@ -252,7 +228,8 @@ def map_context(now: datetime) -> dict:
             "near": [],
             "later": [],
             "untracked": [],
-            "map_url": "",
+            "home_lat": None,
+            "home_lon": None,
             "window_minutes": MAP_WINDOW_MINUTES,
             "updated_at": now.strftime("%H:%M:%S"),
         }
@@ -262,7 +239,8 @@ def map_context(now: datetime) -> dict:
         "near": near,
         "later": [bus for bus in buses if bus["minutes"] > MAP_WINDOW_MINUTES][:3],
         "untracked": [bus for bus in near if bus["lat"] is None],
-        "map_url": build_map_url(near),
+        "home_lat": HOME[0],
+        "home_lon": HOME[1],
         "window_minutes": MAP_WINDOW_MINUTES,
         "updated_at": now.strftime("%H:%M:%S"),
         "home_missing": False,

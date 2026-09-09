@@ -4,13 +4,27 @@
   distances and the map centre are measured from them.
 </p>
 {% else %}
-<span id="map-url" data-url="{{ map_url }}" hidden></span>
 <p class="map-updated">Updated {{ updated_at }}</p>
 
 {% if near %}
 <ul class="bus-list">
   {% for bus in near %}
-  <li class="bus-row {{ 'arriving' if bus.minutes == 0 else 'soon' }}">
+  {# The map reads its markers off these rows, so one poll feeds both. #}
+  <li
+    class="bus-row {{ 'arriving' if bus.minutes == 0 else 'soon' }}"
+    data-key="{{ bus.key }}"
+    data-no="{{ bus.service_no }}"
+    data-stop="{{ bus.stop_name }}"
+    data-eta="{{ "Arr" if bus.minutes == 0 else bus.minutes ~ " min" }}"
+    data-tier="{{ 'arriving' if bus.minutes == 0 else 'soon' }}"
+    {% if bus.lat is not none %}
+    data-lat="{{ bus.lat }}"
+    data-lon="{{ bus.lon }}"
+    data-distance="{{ bus.distance }}"
+    data-bearing="{{ bus.compass }} {{ bus.bearing }}&deg;"
+    {% endif %}
+    data-load="{{ bus.load or '' }}"
+  >
     <span class="bus-no">{{ bus.service_no }}</span>
     <span class="bus-meta">
       <span class="bus-eta">{{ "Arr" if bus.minutes == 0 else bus.minutes ~ " min" }}</span>

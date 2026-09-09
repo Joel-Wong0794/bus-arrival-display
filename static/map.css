@@ -35,22 +35,66 @@ body {
 }
 
 .map-frame {
+  height: 55vh;
+  min-height: 280px;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid #333;
+  /* Unreachable tiles otherwise leave Leaflet's own light grey showing, which
+     reads as broken against the dark page. */
   background: #1c1c1c;
 }
 
-.map-frame iframe {
-  display: block;
-  width: 100%;
-  height: 55vh;
-  min-height: 280px;
-  border: 0;
-  /* An unreachable OneMap paints the frame white, which reads as broken against
-     the dark page. Fail to a dark rectangle instead. */
-  background: #1c1c1c;
+/* The point of the whole exercise: the service number, legible without a tap. */
+.bus-pin {
+  display: inline-block;
+  transform: translate(-50%, -50%);
+  padding: 3px 8px;
+  border-radius: 20px;
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 0.82rem;
+  font-weight: bold;
+  color: #111;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55);
 }
+
+.bus-pin.arriving { background: #ff5a5a; }
+.bus-pin.soon { background: #ffd166; }
+
+.home-pin {
+  border-radius: 50%;
+  background: #7fd3ff;
+  border: 3px solid #111;
+  box-shadow: 0 0 0 4px rgba(127, 211, 255, 0.25);
+}
+
+/* Leaflet's chrome ships light; repaint it for the dark page. */
+.leaflet-container { background: #1c1c1c; }
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: #252525;
+  color: #f5f5f5;
+}
+
+.leaflet-popup-content { font-size: 0.85rem; line-height: 1.5; }
+
+.leaflet-control-attribution {
+  background: rgba(17, 17, 17, 0.8) !important;
+  color: #888 !important;
+  font-size: 0.62rem;
+}
+
+.leaflet-control-attribution a { color: #7fd3ff; }
+
+.leaflet-bar a {
+  background: #252525;
+  color: #f5f5f5;
+  border-bottom-color: #333;
+}
+
+.leaflet-bar a:hover { background: #2f2f2f; }
 
 .map-updated {
   color: #555;
@@ -142,6 +186,6 @@ body {
 
 .dot.arriving { background: #ff5a5a; }
 .dot.soon { background: #ffd166; }
-.dot.home { background: #8b2f2f; }
+.dot.home { background: #7fd3ff; }
 
 .dot + .dot { margin-left: 10px; }
