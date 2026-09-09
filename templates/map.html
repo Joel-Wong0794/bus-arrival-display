@@ -13,6 +13,7 @@
       <a class="map-back" href="/">Arrivals</a>
     </header>
 
+    {% if not home_missing %}
     <div class="map-frame">
       <iframe
         id="map-frame"
@@ -20,6 +21,7 @@
         title="OneMap showing buses arriving within {{ window_minutes }} minutes"
       ></iframe>
     </div>
+    {% endif %}
 
     <!-- No "load" trigger: the first render is already server-side, so the page
          costs one API call rather than two. -->

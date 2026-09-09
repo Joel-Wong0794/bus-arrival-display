@@ -25,10 +25,24 @@ REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", "20"))
 # Combined with flooring, 30 here means anything under 1m30s shows as "Arr".
 BUFFER_SECONDS = int(os.environ.get("BUFFER_SECONDS", "30"))
 
-# Read with defaults rather than os.environ[...]: every route lives in this one
-# module, so a missing value here would take the arrivals display down too.
-HOME_LAT = float(os.environ.get("HOME_LAT", "1.3527244966827343"))
-HOME_LON = float(os.environ.get("HOME_LON", "103.72300347346224"))
+def read_home() -> tuple[float, float] | None:
+    """Home coordinates, or None when unset.
+
+    No default: a home address does not belong in a public repository. Returning
+    None rather than raising keeps a missing value contained to /map — every
+    route lives in this one module, so raising here would take the arrivals
+    display down with it.
+    """
+    lat, lon = os.environ.get("HOME_LAT"), os.environ.get("HOME_LON")
+    if not lat or not lon:
+        return None
+    try:
+        return float(lat), float(lon)
+    except ValueError:
+        return None
+
+
+HOME = read_home()
 # Only buses arriving within this many minutes get plotted. The map answers
 # "should I leave now", so anything further out is noise.
 MAP_WINDOW_MINUTES = int(os.environ.get("MAP_WINDOW_MINUTES", "5"))
@@ -195,8 +209,8 @@ def collect_map_buses(stops_data: list[dict]) -> list[dict]:
                     "bearing": None,
                 }
                 if bus["lat"] is not None:
-                    metres = haversine_m(HOME_LAT, HOME_LON, bus["lat"], bus["lon"])
-                    bearing = bearing_deg(HOME_LAT, HOME_LON, bus["lat"], bus["lon"])
+                    metres = haversine_m(*HOME, bus["lat"], bus["lon"])
+                    bearing = bearing_deg(*HOME, bus["lat"], bus["lon"])
                     row["distance"] = format_distance(metres)
                     row["bearing"] = round(bearing)
                     row["compass"] = COMPASS_POINTS[round(bearing / 22.5) % 16]
@@ -217,7 +231,7 @@ def build_map_url(buses: list[dict]) -> str:
         "mapStyle=Grey",
         "zoomLevel=16",
         "popupWidth=200",
-        f"marker=latLng:{HOME_LAT},{HOME_LON}!icon:fa-home!colour:darkred",
+        f"marker=latLng:{HOME[0]},{HOME[1]}!icon:fa-home!colour:darkred",
     ]
     for bus in buses:
         if bus["lat"] is None:
@@ -232,6 +246,16 @@ def build_map_url(buses: list[dict]) -> str:
 
 
 def map_context(now: datetime) -> dict:
+    if HOME is None:
+        return {
+            "home_missing": True,
+            "near": [],
+            "later": [],
+            "untracked": [],
+            "map_url": "",
+            "window_minutes": MAP_WINDOW_MINUTES,
+            "updated_at": now.strftime("%H:%M:%S"),
+        }
     buses = collect_map_buses(fetch_stops(now))
     near = [bus for bus in buses if bus["minutes"] <= MAP_WINDOW_MINUTES]
     return {
@@ -241,6 +265,7 @@ def map_context(now: datetime) -> dict:
         "map_url": build_map_url(near),
         "window_minutes": MAP_WINDOW_MINUTES,
         "updated_at": now.strftime("%H:%M:%S"),
+        "home_missing": False,
     }
 
 
