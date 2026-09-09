@@ -122,6 +122,15 @@ body {
 .bus-row.arriving { border-left-color: #ff5a5a; }
 .bus-row.soon { border-left-color: #ffd166; }
 
+/* Only a bus with a position has a pin to open. */
+.bus-row[data-lat] { cursor: pointer; }
+.bus-row[data-lat]:active { background: #2f2f2f; }
+
+.bus-row[data-lat]:focus-visible {
+  outline: 2px solid #7fd3ff;
+  outline-offset: 2px;
+}
+
 .bus-no {
   font-size: 1.4rem;
   font-weight: bold;

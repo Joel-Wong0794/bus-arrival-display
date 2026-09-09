@@ -127,6 +127,34 @@
         });
       }
 
+      function focusBus(row) {
+        var marker = markers[row.getAttribute("data-key")];
+        if (!marker) return;
+        var frame = document.getElementById("map");
+        // Tapping a row far down the list is pointless if the map has been
+        // scrolled off the top of the screen.
+        if (frame.getBoundingClientRect().bottom < 80) {
+          frame.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        map.panTo(marker.getLatLng());
+        marker.openPopup();
+      }
+
+      // Delegated, so the handler survives every htmx swap of the rows. Rows
+      // without a position carry no data-lat and stay inert.
+      var list = document.getElementById("bus-list");
+      list.addEventListener("click", function (event) {
+        var row = event.target.closest(".bus-row[data-lat]");
+        if (row) focusBus(row);
+      });
+      list.addEventListener("keydown", function (event) {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        var row = event.target.closest(".bus-row[data-lat]");
+        if (!row) return;
+        event.preventDefault();
+        focusBus(row);
+      });
+
       document.body.addEventListener("htmx:afterSwap", syncMarkers);
       syncMarkers();
 
