@@ -1,3 +1,9 @@
+{% if home_missing %}
+<p class="bus-empty">
+  Set <code>HOME_LAT</code> and <code>HOME_LON</code> to use this page &mdash;
+  distances and the map centre are measured from them.
+</p>
+{% else %}
 <span id="map-url" data-url="{{ map_url }}" hidden></span>
 <p class="map-updated">Updated {{ updated_at }}</p>
 
@@ -38,4 +44,5 @@
   Next after:
   {% for bus in later %}{{ bus.service_no }} in {{ bus.minutes }} min{{ ", " if not loop.last }}{% endfor %}
 </p>
+{% endif %}
 {% endif %}
