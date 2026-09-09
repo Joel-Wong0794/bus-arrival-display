@@ -14,7 +14,7 @@
         <span class="etas">
           {% for bus in buses %}
           <span
-            class="eta{{ ' arriving' if bus.minutes == 0 else '' }}"
+            class="eta{{ ' arriving' if bus.minutes == 0 else ' soon' if bus.minutes <= 5 else '' }}"
             data-arrival="{{ bus.arrival_ms }}"
             >{{ "Arr" if bus.minutes == 0 else bus.minutes ~ " min" }}</span
           >

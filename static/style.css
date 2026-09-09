@@ -79,6 +79,7 @@ body {
 .eta {
   color: #7fffa1;
   position: relative;
+  opacity: 0.7;
 }
 
 .eta:not(:last-child)::after {
@@ -88,10 +89,23 @@ body {
   color: #555;
 }
 
-/* Anything inside the 1m30s "Arr" band — catch the eye from across the room. */
+/* First ETA is the one that matters most — make it the focal point of the row. */
+.eta:first-child {
+  font-size: 1.3em;
+  font-weight: bold;
+  opacity: 1;
+}
+
+/* Mid-range wait: not urgent, but worth a glance. */
+.eta.soon {
+  color: #ffd166;
+}
+
+/* Anything inside the 1m30s "Arr" band — catch the eye from across the room, at any position. */
 .eta.arriving {
   color: #ff5a5a;
   font-weight: bold;
+  opacity: 1;
 }
 
 .error,
