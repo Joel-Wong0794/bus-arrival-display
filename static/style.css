@@ -75,6 +75,14 @@ body {
 
 .eta {
   color: #7fffa1;
+  position: relative;
+}
+
+.eta:not(:last-child)::after {
+  content: "|";
+  position: absolute;
+  right: -8px;
+  color: #555;
 }
 
 /* Anything inside the 1m30s "Arr" band — catch the eye from across the room. */
