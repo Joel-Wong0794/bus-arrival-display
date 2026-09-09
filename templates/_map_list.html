@@ -14,14 +14,13 @@
     class="bus-row {{ 'arriving' if bus.minutes == 0 else 'soon' }}"
     data-key="{{ bus.key }}"
     data-no="{{ bus.service_no }}"
-    data-stop="{{ bus.stop_name }}"
+    data-stop="{{ bus.stop_name }} ({{ bus.stop_code }})"
     data-eta="{{ "Arr" if bus.minutes == 0 else bus.minutes ~ " min" }}"
     data-tier="{{ 'arriving' if bus.minutes == 0 else 'soon' }}"
     {% if bus.lat is not none %}
     data-lat="{{ bus.lat }}"
     data-lon="{{ bus.lon }}"
     data-distance="{{ bus.distance }}"
-    data-bearing="{{ bus.compass }} {{ bus.bearing }}&deg;"
     {% endif %}
     data-load="{{ bus.load or '' }}"
   >
@@ -30,14 +29,14 @@
       <span class="bus-eta">{{ "Arr" if bus.minutes == 0 else bus.minutes ~ " min" }}</span>
       <span class="bus-where">
         {% if bus.distance %}
-        {{ bus.compass }} {{ bus.bearing }}&deg; &middot; {{ bus.distance }} direct
+        {{ bus.distance }}
         {% else %}
         no live position
         {% endif %}
       </span>
     </span>
     <span class="bus-stop">
-      {{ bus.stop_name }}{% if bus.load %} &middot; {{ bus.load }}{% endif %}
+      {{ bus.stop_name }} ({{ bus.stop_code }}){% if bus.load %} &middot; {{ bus.load }}{% endif %}
     </span>
   </li>
   {% endfor %}

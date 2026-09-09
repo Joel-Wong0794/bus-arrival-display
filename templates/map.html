@@ -88,10 +88,9 @@
           var detail =
             "<b>" + no + "</b> &middot; " + row.getAttribute("data-eta") +
             "<br>to " + row.getAttribute("data-stop") +
-            "<br>" + row.getAttribute("data-bearing") +
-            " &middot; " + row.getAttribute("data-distance") + " direct" +
+            "<br>" + row.getAttribute("data-distance") +
             (row.getAttribute("data-load")
-              ? "<br>" + row.getAttribute("data-load")
+              ? " &middot; " + row.getAttribute("data-load")
               : "");
 
           if (markers[key]) {
