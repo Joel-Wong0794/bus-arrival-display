@@ -22,6 +22,22 @@ body {
   padding: 8px;
 }
 
+/* Portrait mode: stack vertically or use single column */
+@media (orientation: portrait) {
+  .grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+    height: auto;
+    min-height: 100vh;
+    overflow-y: auto;
+  }
+
+  html,
+  body {
+    overflow: auto;
+  }
+}
+
 .quadrant {
   background: #1c1c1c;
   border-radius: 12px;
@@ -59,6 +75,14 @@ body {
 
 .eta {
   color: #7fffa1;
+  position: relative;
+}
+
+.eta:not(:last-child)::after {
+  content: "|";
+  position: absolute;
+  right: -8px;
+  color: #555;
 }
 
 /* Anything inside the 1m30s "Arr" band — catch the eye from across the room. */
