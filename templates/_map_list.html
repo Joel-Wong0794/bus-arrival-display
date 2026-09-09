@@ -1,0 +1,38 @@
+{% if near %}
+<ul class="bus-list">
+  {% for bus in near %}
+  <li class="bus-row {{ 'arriving' if bus.minutes == 0 else 'soon' }}">
+    <span class="bus-no">{{ bus.service_no }}</span>
+    <span class="bus-meta">
+      <span class="bus-eta">{{ "Arr" if bus.minutes == 0 else bus.minutes ~ " min" }}</span>
+      <span class="bus-where">
+        {% if bus.distance %}
+        {{ bus.compass }} {{ bus.bearing }}&deg; &middot; {{ bus.distance }} direct
+        {% else %}
+        no live position
+        {% endif %}
+      </span>
+    </span>
+    <span class="bus-stop">
+      {{ bus.stop_name }}{% if bus.load %} &middot; {{ bus.load }}{% endif %}
+    </span>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="bus-empty">Nothing arriving within {{ window_minutes }} min.</p>
+{% endif %}
+
+{% if untracked %}
+<p class="bus-note">
+  {{ untracked | length }} of these {{ "has" if untracked | length == 1 else "have" }}
+  no GPS fix, so {{ "it is" if untracked | length == 1 else "they are" }} not pinned on the map.
+</p>
+{% endif %}
+
+{% if later %}
+<p class="bus-later">
+  Next after:
+  {% for bus in later %}{{ bus.service_no }} in {{ bus.minutes }} min{{ ", " if not loop.last }}{% endfor %}
+</p>
+{% endif %}
