@@ -38,9 +38,10 @@
             (els[i].getAttribute("data-arrival") - now - BUFFER_MS) / 60000
           );
           var arriving = mins <= 0;
+          var soon = !arriving && mins <= 5;
           els[i].textContent = arriving ? "Arr" : mins + " min";
           // className, not classList — the kiosk WebView is old.
-          els[i].className = arriving ? "eta arriving" : "eta";
+          els[i].className = arriving ? "eta arriving" : soon ? "eta soon" : "eta";
         }
       }
       setInterval(tickEtas, 1000);
