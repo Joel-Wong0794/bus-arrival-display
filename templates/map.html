@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Buses near home</title>
+    <script src="https://unpkg.com/htmx.org@2"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='map.css') }}" />
+  </head>
+  <body>
+    <header class="map-header">
+      <h1>Buses near home</h1>
+      <a class="map-back" href="/">Arrivals</a>
+    </header>
+
+    <div class="map-frame">
+      <iframe
+        src="{{ map_url }}"
+        title="OneMap showing buses arriving within {{ window_minutes }} minutes"
+        loading="lazy"
+      ></iframe>
+    </div>
+
+    <div class="map-actions">
+      <a class="map-refresh" href="/map">Update map</a>
+      <span class="map-pinned">Pins fixed at {{ updated_at }}</span>
+    </div>
+
+    <!-- No "load" trigger: the first render is already server-side, so the page
+         costs one API call rather than two. -->
+    <div
+      id="bus-list"
+      hx-get="/map-list"
+      hx-trigger="every {{ refresh_seconds }}s, refresh"
+      hx-swap="innerHTML"
+    >
+      {% include "_map_list.html" %}
+    </div>
+
+    <p class="map-legend">
+      <span class="dot arriving"></span> Arriving
+      <span class="dot soon"></span> Within {{ window_minutes }} min
+      <span class="dot home"></span> Home
+    </p>
+
+    <script>
+      // Waking the phone resumes a throttled poll only on its next tick.
+      document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) htmx.trigger("#bus-list", "refresh");
+      });
+    </script>
+  </body>
+</html>
