@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Buses near home</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/htmx.org@2"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='map.css') }}" />
   </head>
@@ -14,13 +19,7 @@
     </header>
 
     {% if not home_missing %}
-    <div class="map-frame">
-      <iframe
-        id="map-frame"
-        src="{{ map_url }}"
-        title="OneMap showing buses arriving within {{ window_minutes }} minutes"
-      ></iframe>
-    </div>
+    <div id="map" class="map-frame"></div>
     {% endif %}
 
     <!-- No "load" trigger: the first render is already server-side, so the page
@@ -40,25 +39,103 @@
       <span class="dot home"></span> Home
     </p>
 
+    {% if not home_missing %}
     <script>
-      // Re-point the iframe only when a pin has actually moved. The feed
-      // publishes every 20s and the list polls faster than that, so reloading
-      // the map on every poll would reload OneMap's whole app — and visibly
-      // flicker it — to redraw identical pins.
-      function syncMap() {
-        var carrier = document.getElementById("map-url");
-        var frame = document.getElementById("map-frame");
-        if (!carrier || !frame) return;
-        var next = carrier.getAttribute("data-url");
-        // getAttribute, not .src: the property resolves to an absolute URL and
-        // would never compare equal to the attribute string.
-        if (next && frame.getAttribute("src") !== next) frame.setAttribute("src", next);
+      var HOME = [{{ home_lat }}, {{ home_lon }}];
+
+      var map = L.map("map", { zoomControl: true }).setView(HOME, 15);
+
+      L.tileLayer("https://www.onemap.gov.sg/maps/tiles/Night/{z}/{x}/{y}.png", {
+        minZoom: 11,
+        maxZoom: 19,
+        detectRetina: true,
+        // Required by SLA's terms of use.
+        attribution:
+          '<img src="https://www.onemap.gov.sg/web-assets/images/logo/om_logo.png" style="height:18px;vertical-align:middle"> ' +
+          'OneMap | Map data &copy; contributors, ' +
+          '<a href="https://www.sla.gov.sg/">Singapore Land Authority</a>',
+      }).addTo(map);
+
+      L.marker(HOME, {
+        icon: L.divIcon({ className: "home-pin", html: "", iconSize: [16, 16] }),
+        zIndexOffset: 1000,
+      })
+        .addTo(map)
+        .bindPopup("Home");
+
+      // Keyed by vehicle so a refresh moves a marker rather than replacing it —
+      // rebuilding them would slam shut any popup that was open.
+      var markers = {};
+      var fitted = false;
+
+      function syncMarkers() {
+        var rows = document.querySelectorAll("#bus-list .bus-row[data-lat]");
+        var seen = {};
+        var points = [HOME];
+
+        for (var i = 0; i < rows.length; i++) {
+          var row = rows[i];
+          var key = row.getAttribute("data-key");
+          var at = [
+            parseFloat(row.getAttribute("data-lat")),
+            parseFloat(row.getAttribute("data-lon")),
+          ];
+          seen[key] = true;
+          points.push(at);
+
+          var tier = row.getAttribute("data-tier");
+          var no = row.getAttribute("data-no");
+          var detail =
+            "<b>" + no + "</b> &middot; " + row.getAttribute("data-eta") +
+            "<br>to " + row.getAttribute("data-stop") +
+            "<br>" + row.getAttribute("data-bearing") +
+            " &middot; " + row.getAttribute("data-distance") + " direct" +
+            (row.getAttribute("data-load")
+              ? "<br>" + row.getAttribute("data-load")
+              : "");
+
+          if (markers[key]) {
+            markers[key].setLatLng(at);
+            markers[key].setIcon(busIcon(no, tier));
+            markers[key].getPopup().setContent(detail);
+          } else {
+            markers[key] = L.marker(at, { icon: busIcon(no, tier) })
+              .addTo(map)
+              .bindPopup(detail);
+          }
+        }
+
+        for (var key in markers) {
+          if (!seen[key]) {
+            map.removeLayer(markers[key]);
+            delete markers[key];
+          }
+        }
+
+        // Frame everything once. Re-fitting on each poll would yank the map back
+        // every 10 seconds and fight any panning.
+        if (!fitted && points.length > 1) {
+          map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 17 });
+          fitted = true;
+        }
       }
-      document.body.addEventListener("htmx:afterSwap", syncMap);
+
+      function busIcon(no, tier) {
+        return L.divIcon({
+          className: "",
+          html: '<span class="bus-pin ' + tier + '">' + no + "</span>",
+          iconSize: [0, 0],
+        });
+      }
+
+      document.body.addEventListener("htmx:afterSwap", syncMarkers);
+      syncMarkers();
+
       // Waking the phone resumes a throttled poll only on its next tick.
       document.addEventListener("visibilitychange", function () {
         if (!document.hidden) htmx.trigger("#bus-list", "refresh");
       });
     </script>
+    {% endif %}
   </body>
 </html>
