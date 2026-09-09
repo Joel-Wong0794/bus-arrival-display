@@ -52,25 +52,10 @@ body {
   background: #1c1c1c;
 }
 
-.map-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 2px 14px;
-}
-
-.map-refresh {
-  color: #7fd3ff;
-  border: 1px solid #2f4a58;
-  border-radius: 8px;
-  padding: 7px 13px;
-  font-size: 0.9rem;
-  text-decoration: none;
-}
-
-.map-pinned {
+.map-updated {
   color: #555;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
+  padding: 10px 2px 12px;
 }
 
 .bus-list {

@@ -15,15 +15,10 @@
 
     <div class="map-frame">
       <iframe
+        id="map-frame"
         src="{{ map_url }}"
         title="OneMap showing buses arriving within {{ window_minutes }} minutes"
-        loading="lazy"
       ></iframe>
-    </div>
-
-    <div class="map-actions">
-      <a class="map-refresh" href="/map">Update map</a>
-      <span class="map-pinned">Pins fixed at {{ updated_at }}</span>
     </div>
 
     <!-- No "load" trigger: the first render is already server-side, so the page
@@ -44,6 +39,20 @@
     </p>
 
     <script>
+      // Re-point the iframe only when a pin has actually moved. The feed
+      // publishes every 20s and the list polls faster than that, so reloading
+      // the map on every poll would reload OneMap's whole app — and visibly
+      // flicker it — to redraw identical pins.
+      function syncMap() {
+        var carrier = document.getElementById("map-url");
+        var frame = document.getElementById("map-frame");
+        if (!carrier || !frame) return;
+        var next = carrier.getAttribute("data-url");
+        // getAttribute, not .src: the property resolves to an absolute URL and
+        // would never compare equal to the attribute string.
+        if (next && frame.getAttribute("src") !== next) frame.setAttribute("src", next);
+      }
+      document.body.addEventListener("htmx:afterSwap", syncMap);
       // Waking the phone resumes a throttled poll only on its next tick.
       document.addEventListener("visibilitychange", function () {
         if (!document.hidden) htmx.trigger("#bus-list", "refresh");
