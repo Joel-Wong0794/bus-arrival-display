@@ -67,8 +67,29 @@ body {
   margin-bottom: 8px;
 }
 
+/* Number and destination stack, so a long destination can't push the ETA —
+   the thing actually being read — off the right edge of a quadrant. */
+.service {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 .service-no {
   font-weight: bold;
+}
+
+/* Secondary by design: answers "which 334" only once the eye has already
+   landed on the number and the minutes. */
+.destination {
+  font-size: 0.55em;
+  line-height: 1.2;
+  color: #8b8b8b;
+  font-weight: normal;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .etas {

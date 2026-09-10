@@ -3,7 +3,7 @@
     {
       "src": "api/index.py",
       "use": "@vercel/python",
-      "config": { "includeFiles": ["templates/**", "static/**"] }
+      "config": { "includeFiles": ["templates/**", "static/**", "data/**"] }
     }
   ],
   "routes": [{ "src": "/(.*)", "dest": "api/index.py" }]

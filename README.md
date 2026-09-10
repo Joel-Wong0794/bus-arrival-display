@@ -67,6 +67,25 @@ Within a service, the **next** bus is drawn 1.3× larger and bold at full opacit
 
 In portrait the 2×2 grid collapses to a single scrolling column, so the same page works on a phone as on the tablet.
 
+## Destinations
+
+Under each service number is where that bus is heading — `to Boon Lay Int`, `to Joo Koon Int`. It answers the question a service number alone can't at a stop served in both directions: *is this the one going my way?*
+
+Two things shape how it renders:
+
+- **Loop services read `Loop`, not a destination.** Services like 334 and 98 report the same code for origin and destination. "to Jurong East Int" would be technically true and practically useless, since that is also where the bus started.
+- **It is deliberately small and grey.** The ETA is still the number you read from across the room; the destination is there for the second glance, once you've already found the service.
+
+The arrival feed names a destination only by bus stop code (`22009`), and the `BusStops` dataset that maps codes to names has no filter-by-code — resolving one destination means paging all ~5,200 stops. Doing that per request, on a serverless cold start, would add seconds to a page the tablet polls every 20s. So the lookup is baked into `data/bus_stops.json` and read once at import. It is a static asset, not a database; the app stays stateless at runtime.
+
+**Regenerate it** when a stop gains a service whose destination isn't in the file:
+
+```
+python scripts/fetch_bus_stops.py
+```
+
+A stale or missing file degrades rather than breaks: an unknown code falls back to displaying the raw code, and if the file is absent entirely every destination does. `vercel.json` includes `data/**` so the file ships with the function.
+
 ## Map Page
 
 `/map` answers a different question: not *when* the bus arrives but *where it is now*. Buses arriving within `MAP_WINDOW_MINUTES` are pinned on a [OneMap](https://www.onemap.gov.sg/) layer via Leaflet, each pin labelled with its service number and coloured by the same tiers above. Below the map, the same buses are listed with ETA, straight-line distance, stop name and code, and crowding. Tapping a row pans to that bus and opens its pin.
@@ -90,6 +109,7 @@ Visit `/arrivals?debug=1` to see per-bus:
 - Raw `EstimatedArrival` string from DataMall
 - `Monitored` flag (0 = schedule-derived, not live GPS)
 - Exact float minutes vs. displayed rounded value
+- Resolved destination — a raw code here instead of a name means it is missing from `data/bus_stops.json`
 
 **Use case**: if a tile's time looks wildly off, check `Monitored` first. A `0` means DataMall estimated from the timetable, not a vehicle position — it can legitimately differ from a reference app by several minutes, and there's nothing we can do about it.
 

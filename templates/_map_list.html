@@ -24,8 +24,14 @@
     tabindex="0"
     {% endif %}
     data-load="{{ bus.load or '' }}"
+    data-destination="{{ bus.destination or '' }}"
   >
-    <span class="bus-no">{{ bus.service_no }}</span>
+    <span class="bus-no">
+      {{ bus.service_no }}
+      {% if bus.destination %}
+      <span class="bus-destination">{{ bus.destination }}</span>
+      {% endif %}
+    </span>
     <span class="bus-meta">
       <span class="bus-eta">{{ "Arr" if bus.minutes == 0 else bus.minutes ~ " min" }}</span>
       <span class="bus-where">

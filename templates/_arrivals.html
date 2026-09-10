@@ -10,7 +10,15 @@
     <ul class="services">
       {% for service_no, buses in stop.services %}
       <li>
-        <span class="service-no">{{ service_no }}</span>
+        {# Destination comes off the first bus: a service's queued buses share a
+           destination in all but rare short-trip cases, and the tile has room
+           for one label, not three. #}
+        <span class="service">
+          <span class="service-no">{{ service_no }}</span>
+          {% if buses and buses[0].destination %}
+          <span class="destination">{{ buses[0].destination }}</span>
+          {% endif %}
+        </span>
         <span class="etas">
           {% for bus in buses %}
           <span

@@ -85,9 +85,12 @@
 
           var tier = row.getAttribute("data-tier");
           var no = row.getAttribute("data-no");
+          var destination = row.getAttribute("data-destination");
           var detail =
-            "<b>" + no + "</b> &middot; " + row.getAttribute("data-eta") +
-            "<br>to " + row.getAttribute("data-stop") +
+            "<b>" + no + "</b>" +
+            (destination ? " " + destination : "") +
+            " &middot; " + row.getAttribute("data-eta") +
+            "<br>at " + row.getAttribute("data-stop") +
             "<br>" + row.getAttribute("data-distance") +
             (row.getAttribute("data-load")
               ? " &middot; " + row.getAttribute("data-load")

@@ -1,5 +1,7 @@
+import json
 import math
 import os
+import pathlib
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -47,6 +49,32 @@ HOME = read_home()
 MAP_WINDOW_MINUTES = int(os.environ.get("MAP_WINDOW_MINUTES", "5"))
 
 LOAD_LABELS = {"SEA": "Seats", "SDA": "Standing", "LSD": "Limited"}
+
+# Destination-code to stop-name lookup, baked by scripts/fetch_bus_stops.py.
+# Read once at import: the arrival feed names a destination only by code, and
+# the BusStops dataset has no filter-by-code, so resolving one at request time
+# would mean paging ~5000 rows on every cold start. Missing file or code is not
+# fatal — the destination just falls back to the raw code, or is omitted.
+BUS_STOPS_PATH = pathlib.Path(__file__).resolve().parent.parent / "data" / "bus_stops.json"
+try:
+    BUS_STOPS = json.loads(BUS_STOPS_PATH.read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    BUS_STOPS = {}
+
+
+def destination_label(next_bus: dict) -> str | None:
+    """Where this bus is heading, ready to print.
+
+    A loop service reports the same code for origin and destination, so "to
+    Jurong East Int" would be technically true and practically useless — it is
+    also where the bus started. Those read "Loop" instead.
+    """
+    origin, destination = next_bus.get("OriginCode"), next_bus.get("DestinationCode")
+    if not destination:
+        return None
+    if origin == destination:
+        return "Loop"
+    return f"to {BUS_STOPS.get(destination, destination)}"
 
 stop_codes = os.environ["BUS_STOP_CODES"].split(",")
 stop_names = os.environ.get("BUS_STOP_NAMES", "").split(",")
@@ -145,6 +173,7 @@ def get_bus_arrival(
                     # Unbuffered, so the debug view shows what the feed actually said.
                     "exact_minutes": seconds / 60,
                     "monitored": next_bus.get("Monitored"),
+                    "destination": destination_label(next_bus),
                 }
             )
         # Upstream drops services with nothing running rather than listing them.
@@ -190,6 +219,7 @@ def collect_map_buses(stops_data: list[dict]) -> list[dict]:
                     "lat": bus["lat"],
                     "lon": bus["lon"],
                     "distance": None,
+                    "destination": bus["destination"],
                 }
                 if bus["lat"] is not None:
                     row["distance"] = format_distance(

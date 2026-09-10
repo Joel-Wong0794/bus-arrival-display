@@ -20,6 +20,7 @@
 <table border="1" cellpadding="4" cellspacing="0">
   <tr>
     <th>Service</th>
+    <th>Destination</th>
     <th>EstimatedArrival (raw)</th>
     <th>Monitored</th>
     <th>Exact minutes</th>
@@ -28,6 +29,7 @@
   {% for service_no, buses in stop.services %}{% for bus in buses %}
   <tr>
     <td>{{ service_no }}</td>
+    <td>{{ bus.destination or "&mdash;" | safe }}</td>
     <td><code>{{ bus.raw }}</code></td>
     <td>{{ bus.monitored }}</td>
     <td>{{ "%.2f"|format(bus.exact_minutes) }}</td>

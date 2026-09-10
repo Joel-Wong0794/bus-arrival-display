@@ -134,6 +134,16 @@ body {
 .bus-no {
   font-size: 1.4rem;
   font-weight: bold;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.bus-destination {
+  font-size: 0.72rem;
+  line-height: 1.2;
+  color: #8b8b8b;
+  font-weight: normal;
 }
 
 .bus-meta {
