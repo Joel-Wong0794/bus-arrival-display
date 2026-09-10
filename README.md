@@ -90,17 +90,16 @@ A stale or missing file degrades rather than breaks: an unknown code falls back 
 
 ## Vehicle Type
 
-A small icon marks each arrival as single deck, double deck, or bendy. The silhouettes differ by height, which is the actual difference between them — the tall one is the double decker. That reads at a glance in a way that a `DD` / `SD` label only does once you already know the codes.
+DataMall reports whether each bus is single deck, double deck, or bendy. It is deliberately **not** drawn on the tiles — it is a curiosity, not something that changes whether you leave the flat, and the display's job is to survive a glance from across the room. So it stays out of the way until asked for:
 
-**The icon is per arrival, not per service.** A service's queued buses are routinely a mix — a double decker followed by two single deckers is the common pattern here — so tagging the service row would be wrong. On `/` each ETA carries its own icon; on `/map`, where a row is already one bus, it sits under the service number.
+- **Hover an ETA on `/`** or a row on `/map` — the browser tooltip names the type.
+- **Tap a bus on `/map`** — the pin's popup lists it alongside distance and crowding.
 
-They are inline SVG, not emoji: the kiosk is an old Android WebView where emoji render inconsistently or as tofu, and their colour can't be controlled. Stroking in `currentColor` means each icon picks up the urgency colour of the ETA it belongs to, and sizing in `em` means it scales with the 1.3× bump on the next bus.
+**It is per arrival, not per service.** A service's queued buses are routinely a mix — a double decker followed by two single deckers is the common pattern here — so it could not be a per-service label like the destination.
 
-`Feature` (`WAB`, wheelchair accessible) is deliberately **not** shown — every bus in this feed reports it, so an icon would mark nothing.
+The popup matters more than the tooltip: `title` tooltips need a mouse, so they never appear on the kiosk tablet or a phone. On touch, the map popup is the only place this surfaces.
 
-### If you touch the countdown
-
-`tickEtas()` writes to `.eta-text`, **not** to `.eta`. The icon is a sibling inside `.eta`, so the old `els[i].textContent = ...` would delete every icon on the first tick — one second after load, silently. Keep the write scoped to the text span.
+`Feature` (`WAB`, wheelchair accessible) is not shown at all — every bus in this feed reports it, so it would mark nothing.
 
 ## Map Page
 

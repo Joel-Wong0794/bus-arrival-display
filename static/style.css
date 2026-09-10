@@ -101,19 +101,6 @@ body {
   color: #7fffa1;
   position: relative;
   opacity: 0.7;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.28em;
-}
-
-/* Sized in em so it scales with the ETA it belongs to — including the 1.3x
-   bump on the next bus — and inherits that ETA's urgency colour via
-   currentColor. Dimmed so it reads as an annotation, not a second number. */
-.bus-type {
-  width: 0.85em;
-  height: 0.85em;
-  flex: none;
-  opacity: 0.65;
 }
 
 .eta:not(:last-child)::after {

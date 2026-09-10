@@ -49,6 +49,7 @@ HOME = read_home()
 MAP_WINDOW_MINUTES = int(os.environ.get("MAP_WINDOW_MINUTES", "5"))
 
 LOAD_LABELS = {"SEA": "Seats", "SDA": "Standing", "LSD": "Limited"}
+TYPE_LABELS = {"SD": "Single deck", "DD": "Double deck", "BD": "Bendy"}
 
 # Destination-code to stop-name lookup, baked by scripts/fetch_bus_stops.py.
 # Read once at import: the arrival feed names a destination only by code, and
@@ -176,7 +177,9 @@ def get_bus_arrival(
                     "destination": destination_label(next_bus),
                     # Per bus, not per service: a service's queued buses are
                     # routinely a mix (a double decker followed by two single).
+                    # Raw code kept for the debug view, label for display.
                     "type": next_bus.get("Type"),
+                    "type_label": TYPE_LABELS.get(next_bus.get("Type")),
                 }
             )
         # Upstream drops services with nothing running rather than listing them.
@@ -223,7 +226,7 @@ def collect_map_buses(stops_data: list[dict]) -> list[dict]:
                     "lon": bus["lon"],
                     "distance": None,
                     "destination": bus["destination"],
-                    "type": bus["type"],
+                    "type_label": bus["type_label"],
                 }
                 if bus["lat"] is not None:
                     row["distance"] = format_distance(

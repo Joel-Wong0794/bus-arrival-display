@@ -86,15 +86,17 @@
           var tier = row.getAttribute("data-tier");
           var no = row.getAttribute("data-no");
           var destination = row.getAttribute("data-destination");
+          // Vehicle type lives here rather than on the pin: the popup is the
+          // one place it surfaces on a touch screen, where :hover never fires.
+          var parts = [row.getAttribute("data-distance")];
+          if (row.getAttribute("data-type")) parts.push(row.getAttribute("data-type"));
+          if (row.getAttribute("data-load")) parts.push(row.getAttribute("data-load"));
           var detail =
             "<b>" + no + "</b>" +
             (destination ? " " + destination : "") +
             " &middot; " + row.getAttribute("data-eta") +
             "<br>at " + row.getAttribute("data-stop") +
-            "<br>" + row.getAttribute("data-distance") +
-            (row.getAttribute("data-load")
-              ? " &middot; " + row.getAttribute("data-load")
-              : "");
+            "<br>" + parts.join(" &middot; ");
 
           if (markers[key]) {
             markers[key].setLatLng(at);

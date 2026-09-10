@@ -1,4 +1,3 @@
-{% from "_bus_type.html" import bus_type_icon %}
 <div class="grid">
   {% for stop in stops %}
   <div class="quadrant">
@@ -22,13 +21,14 @@
         </span>
         <span class="etas">
           {% for bus in buses %}
-          {# The countdown rewrites .eta-text every second, so the icon has to
-             be its own element — putting it in .eta directly would have it
-             wiped on the next tick. #}
+          {# Vehicle type rides in the title, not in the tile: the countdown
+             rewrites this element's text every second, and an attribute
+             survives that where a child element would not. #}
           <span
             class="eta{{ ' arriving' if bus.minutes == 0 else ' soon' if bus.minutes <= 5 else '' }}"
             data-arrival="{{ bus.arrival_ms }}"
-            >{{ bus_type_icon(bus.type) }}<span class="eta-text">{{ "Arr" if bus.minutes == 0 else bus.minutes ~ " min" }}</span></span
+            {% if bus.type_label %}title="{{ bus.type_label }}"{% endif %}
+            >{{ "Arr" if bus.minutes == 0 else bus.minutes ~ " min" }}</span
           >
           {% else %}
           <span class="eta">&mdash;</span>
