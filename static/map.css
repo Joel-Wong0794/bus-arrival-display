@@ -108,7 +108,15 @@ body {
 
 .bus-row {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  /* Fixed first track, not auto: every row is its own grid container, so an
+     auto track is sized per row and lands each ETA at a different x. 4rem
+     clears the longest real service number ("961M", 60px at this weight); a
+     longer one would spill into the gap rather than shift the ETA, which is
+     the failure mode we want. */
+  /* The ETA track has a floor so it can't be starved by a long destination on a
+     narrow phone — the context column wraps to a second line instead. Priority
+     order: the ETA never wraps, the text explaining it may. */
+  grid-template-columns: 4rem minmax(5.5rem, 1fr) auto;
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
@@ -134,16 +142,7 @@ body {
 .bus-no {
   font-size: 1.4rem;
   font-weight: bold;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.bus-destination {
-  font-size: 0.72rem;
-  line-height: 1.2;
-  color: #8b8b8b;
-  font-weight: normal;
+  white-space: nowrap;
 }
 
 .bus-meta {
@@ -165,10 +164,19 @@ body {
   color: #8b8b8b;
 }
 
+/* The context column: where it stops, then where it's heading. Both answer
+   "is this my bus" — neither competes with the ETA for attention. */
 .bus-stop {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   font-size: 0.78rem;
   color: #8b8b8b;
   text-align: right;
+}
+
+.bus-destination {
+  color: #6f6f6f;
 }
 
 .bus-empty {

@@ -26,12 +26,10 @@
     data-load="{{ bus.load or '' }}"
     data-destination="{{ bus.destination or '' }}"
   >
-    <span class="bus-no">
-      {{ bus.service_no }}
-      {% if bus.destination %}
-      <span class="bus-destination">{{ bus.destination }}</span>
-      {% endif %}
-    </span>
+    {# Only the service number lives in column 1. Each row is its own grid
+       container, so anything variable-width here lands every row's ETA at a
+       different x — the destination rides in the context column instead. #}
+    <span class="bus-no">{{ bus.service_no }}</span>
     <span class="bus-meta">
       <span class="bus-eta">{{ "Arr" if bus.minutes == 0 else bus.minutes ~ " min" }}</span>
       <span class="bus-where">
@@ -43,7 +41,9 @@
       </span>
     </span>
     <span class="bus-stop">
-      {{ bus.stop_name }} ({{ bus.stop_code }}){% if bus.load %} &middot; {{ bus.load }}{% endif %}
+      <span class="bus-at">{{ bus.stop_name }} ({{ bus.stop_code }})</span>
+      {% set detail = [bus.destination, bus.load] | select | join(" · ") %}
+      {% if detail %}<span class="bus-destination">{{ detail }}</span>{% endif %}
     </span>
   </li>
   {% endfor %}
