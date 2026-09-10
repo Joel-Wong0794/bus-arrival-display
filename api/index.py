@@ -174,6 +174,9 @@ def get_bus_arrival(
                     "exact_minutes": seconds / 60,
                     "monitored": next_bus.get("Monitored"),
                     "destination": destination_label(next_bus),
+                    # Per bus, not per service: a service's queued buses are
+                    # routinely a mix (a double decker followed by two single).
+                    "type": next_bus.get("Type"),
                 }
             )
         # Upstream drops services with nothing running rather than listing them.
@@ -220,6 +223,7 @@ def collect_map_buses(stops_data: list[dict]) -> list[dict]:
                     "lon": bus["lon"],
                     "distance": None,
                     "destination": bus["destination"],
+                    "type": bus["type"],
                 }
                 if bus["lat"] is not None:
                     row["distance"] = format_distance(

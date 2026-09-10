@@ -88,6 +88,20 @@ python scripts/fetch_bus_stops.py
 
 A stale or missing file degrades rather than breaks: an unknown code falls back to displaying the raw code, and if the file is absent entirely every destination does. `vercel.json` includes `data/**` so the file ships with the function.
 
+## Vehicle Type
+
+A small icon marks each arrival as single deck, double deck, or bendy. The silhouettes differ by height, which is the actual difference between them — the tall one is the double decker. That reads at a glance in a way that a `DD` / `SD` label only does once you already know the codes.
+
+**The icon is per arrival, not per service.** A service's queued buses are routinely a mix — a double decker followed by two single deckers is the common pattern here — so tagging the service row would be wrong. On `/` each ETA carries its own icon; on `/map`, where a row is already one bus, it sits under the service number.
+
+They are inline SVG, not emoji: the kiosk is an old Android WebView where emoji render inconsistently or as tofu, and their colour can't be controlled. Stroking in `currentColor` means each icon picks up the urgency colour of the ETA it belongs to, and sizing in `em` means it scales with the 1.3× bump on the next bus.
+
+`Feature` (`WAB`, wheelchair accessible) is deliberately **not** shown — every bus in this feed reports it, so an icon would mark nothing.
+
+### If you touch the countdown
+
+`tickEtas()` writes to `.eta-text`, **not** to `.eta`. The icon is a sibling inside `.eta`, so the old `els[i].textContent = ...` would delete every icon on the first tick — one second after load, silently. Keep the write scoped to the text span.
+
 ## Map Page
 
 `/map` answers a different question: not *when* the bus arrives but *where it is now*. Buses arriving within `MAP_WINDOW_MINUTES` are pinned on a [OneMap](https://www.onemap.gov.sg/) layer via Leaflet, each pin labelled with its service number and coloured by the same tiers above. Below the map, the same buses are listed with ETA, straight-line distance, stop name and code, destination, and crowding. Tapping a row pans to that bus and opens its pin.
@@ -112,6 +126,7 @@ Visit `/arrivals?debug=1` to see per-bus:
 - `Monitored` flag (0 = schedule-derived, not live GPS)
 - Exact float minutes vs. displayed rounded value
 - Resolved destination — a raw code here instead of a name means it is missing from `data/bus_stops.json`
+- Raw `Type` (`SD` / `DD` / `BD`) behind the vehicle icon
 
 **Use case**: if a tile's time looks wildly off, check `Monitored` first. A `0` means DataMall estimated from the timetable, not a vehicle position — it can legitimately differ from a reference app by several minutes, and there's nothing we can do about it.
 

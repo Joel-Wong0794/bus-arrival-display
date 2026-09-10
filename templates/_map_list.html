@@ -1,3 +1,4 @@
+{% from "_bus_type.html" import bus_type_icon %}
 {% if home_missing %}
 <p class="bus-empty">
   Set <code>HOME_LAT</code> and <code>HOME_LON</code> to use this page &mdash;
@@ -29,7 +30,10 @@
     {# Only the service number lives in column 1. Each row is its own grid
        container, so anything variable-width here lands every row's ETA at a
        different x — the destination rides in the context column instead. #}
-    <span class="bus-no">{{ bus.service_no }}</span>
+    <span class="bus-no">
+      {{ bus.service_no }}
+      {{ bus_type_icon(bus.type) }}
+    </span>
     <span class="bus-meta">
       <span class="bus-eta">{{ "Arr" if bus.minutes == 0 else bus.minutes ~ " min" }}</span>
       <span class="bus-where">

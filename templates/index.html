@@ -39,7 +39,10 @@
           );
           var arriving = mins <= 0;
           var soon = !arriving && mins <= 5;
-          els[i].textContent = arriving ? "Arr" : mins + " min";
+          // Write to the text span, not the .eta itself: .eta also holds the
+          // vehicle-type icon, and setting textContent here would delete it.
+          var text = els[i].querySelector(".eta-text");
+          if (text) text.textContent = arriving ? "Arr" : mins + " min";
           // className, not classList — the kiosk WebView is old.
           els[i].className = arriving ? "eta arriving" : soon ? "eta soon" : "eta";
         }
