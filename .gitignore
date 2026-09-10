@@ -149,6 +149,10 @@ activemq-data/
 
 # Environments
 .env
+# Anything derived from .env holds the same secrets: .env.local, .env.bak, an
+# editor's .env.save. Ignore the family, then let the placeholder file back in.
+.env.*
+!.env.example
 .envrc
 .venv
 env/
