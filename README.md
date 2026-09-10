@@ -35,6 +35,9 @@ Two pages, for two different questions:
 | `HOME_LAT`        | —       | Required for `/map` only. Latitude the map centres on and distances are measured from. No default — an address does not belong in the repo.                              |
 | `HOME_LON`        | —       | Required for `/map` only. Longitude, as above.                                                                                                                          |
 | `MAP_WINDOW_MINUTES` | 5    | Only buses arriving within this many minutes are pinned on `/map`.                                                                                                      |
+| `WEATHER_API_KEY` | —       | Optional. `x-api-key` for data.gov.sg. The endpoint works without one; a key only raises the rate limit.                                                                 |
+| `WEATHER_REGION`  | `west`  | Which NEA forecast region you are in: `north`, `south`, `east`, `west`, `central`. Cannot be derived from `HOME_LAT`/`HOME_LON` — the feed ships no boundaries.          |
+| `WEATHER_TTL_SECONDS` | 900 | How long a fetched forecast is reused before re-fetching.                                                                                                              |
 
 If `HOME_LAT` / `HOME_LON` are unset or unparseable, `/map` says which variables to set and `/` is unaffected — the kiosk display never goes down over a setting only the map needs.
 
@@ -116,6 +119,25 @@ Three things worth knowing about the data:
 Markers are keyed per vehicle, so a refresh moves a pin rather than rebuilding it — otherwise an open popup would slam shut every poll. The view is framed once on load and never re-fitted, so a refresh cannot yank the map while you are panning it.
 
 Leaflet is loaded from a CDN; it is the only dependency beyond Flask, requests, python-dotenv and htmx. OneMap tiles require the SLA attribution that renders in the map's bottom-right corner — leave it in place.
+
+## Weather
+
+The `/map` header shows NEA's current forecast for your region instead of a page title — by the time you have opened the page you know what it shows, and what you don't know is whether to take an umbrella to the stop.
+
+```
+Cloudy
+24–34°C · 6 pm 10 Sep to 6 am 11 Sep
+```
+
+Source is [data.gov.sg's real-time API](https://api-open.data.gov.sg/v2/real-time/api/twenty-four-hr-forecast), which wraps NEA's 24-hour forecast. Three things worth knowing:
+
+- **The API key is optional.** The endpoint answers unauthenticated; `x-api-key` only raises the rate limit, and the spec marks it `required: false` with no `security` block. Set `WEATHER_API_KEY` if you have one, leave it blank if not — at one fetch per 15 minutes it makes no difference.
+- **The region can't be derived from `HOME_LAT`/`HOME_LON`.** The feed names five regions but ships no boundaries for them, so `WEATHER_REGION` has to be told which one you are in. If NEA omits your region for a period, it falls back to the island-wide forecast.
+- **It is cached for `WEATHER_TTL_SECONDS`** (default 900). NEA reissues a few times a day, so fetching per page load would spend requests redrawing the same words. The *record* is cached rather than the rendered text, so the period still advances against the clock inside a TTL.
+
+The weather is fetched only on the `/map` page load, never in the `/map-list` poll — the list refreshes every 20s and the forecast does not.
+
+**It cannot take the bus display down.** `read_weather()` returns `None` on any failure — connection error, timeout, HTTP error, malformed payload — rather than raising, and the header falls back to the plain "Buses near home" title. If a forecast was fetched earlier, an outage serves that last good reading instead of nothing. The arrivals page never calls it at all.
 
 ## Debug View
 

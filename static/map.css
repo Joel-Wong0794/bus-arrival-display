@@ -28,6 +28,41 @@ body {
   color: #7fd3ff;
 }
 
+/* Kept in the document for screen readers and the heading outline, but out of
+   the visible layout, which the weather now occupies. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.wx {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.wx-text {
+  font-size: 1.3rem;
+  color: #7fd3ff;
+  line-height: 1.15;
+}
+
+/* Temperature and the window it applies to: useful once you've read the
+   forecast, never competing with it. */
+.wx-meta {
+  font-size: 0.72rem;
+  color: #6f6f6f;
+}
+
 .map-back {
   color: #888;
   font-size: 0.9rem;

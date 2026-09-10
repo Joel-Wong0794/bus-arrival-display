@@ -51,6 +51,96 @@ MAP_WINDOW_MINUTES = int(os.environ.get("MAP_WINDOW_MINUTES", "5"))
 LOAD_LABELS = {"SEA": "Seats", "SDA": "Standing", "LSD": "Limited"}
 TYPE_LABELS = {"SD": "Single deck", "DD": "Double deck", "BD": "Bendy"}
 
+# NEA's 24-hour forecast, via data.gov.sg's open real-time API.
+WEATHER_URL = (
+    "https://api-open.data.gov.sg/v2/real-time/api/twenty-four-hr-forecast"
+)
+# Genuinely optional — the endpoint answers without it and the key only buys a
+# higher rate limit, so an unset key costs nothing at this polling volume.
+WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY")
+# One of north/south/east/west/central. The feed ships no region boundaries, so
+# this can't be derived from HOME — it has to be told which one you're in.
+WEATHER_REGION = os.environ.get("WEATHER_REGION", "west").strip().lower()
+# NEA reissues this a few times a day, so fetching per page load buys nothing
+# and adds latency. A warm serverless instance keeps the cache; a cold one
+# simply fetches again, which is why this needs no store.
+WEATHER_TTL_SECONDS = int(os.environ.get("WEATHER_TTL_SECONDS", "900"))
+
+_weather_cache: dict = {"fetched_at": None, "record": None}
+
+
+def current_period(periods: list[dict], now: datetime) -> dict | None:
+    """The forecast period covering now, falling back to the first listed."""
+    for period in periods:
+        window = period.get("timePeriod", {})
+        try:
+            start = datetime.fromisoformat(window["start"])
+            end = datetime.fromisoformat(window["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if start <= now < end:
+            return period
+    return periods[0] if periods else None
+
+
+def weather_record(now: datetime) -> dict | None:
+    """The raw NEA record, cached for WEATHER_TTL_SECONDS.
+
+    Caches the record rather than the rendered values so the period is always
+    chosen against the current clock — a cached "6am to Midday" would otherwise
+    linger up to a full TTL after that window closed.
+    """
+    fetched_at = _weather_cache["fetched_at"]
+    if fetched_at and (now - fetched_at).total_seconds() < WEATHER_TTL_SECONDS:
+        return _weather_cache["record"]
+
+    headers = {"accept": "application/json"}
+    if WEATHER_API_KEY:
+        headers["x-api-key"] = WEATHER_API_KEY
+    try:
+        response = requests.get(WEATHER_URL, headers=headers, timeout=5)
+        response.raise_for_status()
+        record = response.json()["data"]["records"][0]
+    except (requests.RequestException, ValueError, KeyError, IndexError):
+        # Serve the last good reading rather than nothing: a 24-hour forecast
+        # ages gracefully, and a blank header is worse than a slightly old one.
+        return _weather_cache["record"]
+
+    _weather_cache["fetched_at"] = now
+    _weather_cache["record"] = record
+    return record
+
+
+def read_weather(now: datetime) -> dict | None:
+    """What it's doing outside, or None if NEA can't be reached.
+
+    None rather than raising, and never on the arrivals path: the weather is a
+    garnish on a page whose job is bus times. An NEA outage must not take the
+    departure board down with it.
+    """
+    record = weather_record(now)
+    if not record:
+        return None
+
+    general = record.get("general", {})
+    temperature = general.get("temperature", {})
+    period = current_period(record.get("periods", []), now) or {}
+    # Region first, island-wide as the fallback — a region NEA didn't send is
+    # better answered generally than not at all.
+    forecast = period.get("regions", {}).get(WEATHER_REGION) or general.get(
+        "forecast", {}
+    )
+    if not forecast.get("text"):
+        return None
+    return {
+        "text": forecast["text"],
+        "low": temperature.get("low"),
+        "high": temperature.get("high"),
+        "region": WEATHER_REGION,
+        "period": period.get("timePeriod", {}).get("text"),
+        "outlook": general.get("forecast", {}).get("text"),
+    }
+
 # Destination-code to stop-name lookup, baked by scripts/fetch_bus_stops.py.
 # Read once at import: the arrival feed names a destination only by code, and
 # the BusStops dataset has no filter-by-code, so resolving one at request time
@@ -279,9 +369,15 @@ def index():
 @app.route("/map")
 def bus_map():
     now = datetime.now(SGT)
+    # Only on the page load, not on /map-list: the list polls every 20s and the
+    # forecast changes a few times a day, so putting it in the poll would spend
+    # a request an hour to redraw the same words.
     response = make_response(
         render_template(
-            "map.html", refresh_seconds=REFRESH_SECONDS, **map_context(now)
+            "map.html",
+            refresh_seconds=REFRESH_SECONDS,
+            weather=read_weather(now),
+            **map_context(now),
         )
     )
     response.headers["Cache-Control"] = "no-store"
