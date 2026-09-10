@@ -129,6 +129,12 @@ Cloudy
 24–34°C · 6 pm 10 Sep to 6 am 11 Sep
 ```
 
+The icon is animated. It comes from [Meteocons](https://github.com/basmilius/weather-icons) by Bas Milius, **MIT licensed** — the fourteen SVGs actually used are vendored into `static/weather/` with the licence alongside them, as MIT requires. They animate via SMIL embedded in the file, which plays inside an `<img>` with no script and no library.
+
+All 23 of NEA's forecast strings are mapped in `WEATHER_ICONS`. Four of them name a time of day (`Fair (Day)`, `Fair (Night)`, and the Partly Cloudy pair); the bare `Fair` and `Partly Cloudy` don't, so those are settled against the clock — sunrise and sunset barely move in Singapore, so a fixed 7am/7pm pair picks the right sun or moon without an ephemeris.
+
+If NEA ever adds a value, it falls through to no icon rather than a broken image, and the text still renders.
+
 Source is [data.gov.sg's real-time API](https://api-open.data.gov.sg/v2/real-time/api/twenty-four-hr-forecast), which wraps NEA's 24-hour forecast. Three things worth knowing:
 
 - **The API key is optional.** The endpoint answers unauthenticated; `x-api-key` only raises the rate limit, and the spec marks it `required: false` with no `security` block. Set `WEATHER_API_KEY` if you have one, leave it blank if not — at one fetch per 15 minutes it makes no difference.

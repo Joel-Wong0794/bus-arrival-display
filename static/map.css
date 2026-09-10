@@ -17,7 +17,9 @@ body {
 
 .map-header {
   display: flex;
-  align-items: baseline;
+  /* Centred, not baseline: the weather block is now an icon beside two lines
+     of text, and a baseline would hang the icon off the first of them. */
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 10px;
@@ -45,13 +47,32 @@ body {
 
 .wx {
   display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The SVG carries its own SMIL animation, which plays inside an <img> without
+   any script. Fixed box so the header height doesn't jump between forecasts. */
+.wx-icon {
+  width: 46px;
+  height: 46px;
+  flex: none;
+}
+
+.wx-words {
+  display: flex;
   flex-direction: column;
   gap: 1px;
   min-width: 0;
 }
 
+/* 1.15rem, not the 1.3rem the old title used: NEA's vocabulary runs to
+   "Heavy Thundery Showers with Gusty Winds", and this keeps 22 of its 23
+   values on a single line at 360px. The one that still wraps is too long to
+   fit at any size worth reading. */
 .wx-text {
-  font-size: 1.3rem;
+  font-size: 1.15rem;
   color: #7fd3ff;
   line-height: 1.15;
 }

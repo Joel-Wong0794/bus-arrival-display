@@ -22,12 +22,25 @@
       <h1 class="visually-hidden">Buses near home</h1>
       {% if weather %}
       <div class="wx">
-        <span class="wx-text">{{ weather.text }}</span>
-        <span class="wx-meta">
-          {%- if weather.low is not none and weather.high is not none -%}
-          {{ weather.low }}&ndash;{{ weather.high }}&deg;C
-          {%- endif -%}
-          {%- if weather.period %} &middot; {{ weather.period }}{% endif -%}
+        {% if weather.icon %}
+        {# Decorative: the forecast is spelled out immediately beside it, so an
+           alt would only make a screen reader say it twice. #}
+        <img
+          class="wx-icon"
+          src="{{ url_for('static', filename='weather/' ~ weather.icon ~ '.svg') }}"
+          alt=""
+          width="46"
+          height="46"
+        />
+        {% endif %}
+        <span class="wx-words">
+          <span class="wx-text">{{ weather.text }}</span>
+          <span class="wx-meta">
+            {%- if weather.low is not none and weather.high is not none -%}
+            {{ weather.low }}&ndash;{{ weather.high }}&deg;C
+            {%- endif -%}
+            {%- if weather.period %} &middot; {{ weather.period }}{% endif -%}
+          </span>
         </span>
       </div>
       {% else %}

@@ -68,6 +68,49 @@ WEATHER_TTL_SECONDS = int(os.environ.get("WEATHER_TTL_SECONDS", "900"))
 
 _weather_cache: dict = {"fetched_at": None, "record": None}
 
+# NEA's 23 forecast strings mapped onto Meteocons icons in static/weather.
+# "{dn}" is filled with day or night: NEA marks the distinction on some values
+# and leaves it off others, so the ambiguous ones are settled by the clock.
+WEATHER_ICONS = {
+    "Fair": "clear-{dn}",
+    "Fair (Day)": "clear-day",
+    "Fair (Night)": "clear-night",
+    "Fair and Warm": "clear-day",
+    "Partly Cloudy": "partly-cloudy-{dn}",
+    "Partly Cloudy (Day)": "partly-cloudy-day",
+    "Partly Cloudy (Night)": "partly-cloudy-night",
+    "Cloudy": "cloudy",
+    "Hazy": "haze",
+    "Slightly Hazy": "haze",
+    "Windy": "wind",
+    "Mist": "mist",
+    "Fog": "fog",
+    "Light Rain": "drizzle",
+    "Moderate Rain": "rain",
+    "Heavy Rain": "extreme-rain",
+    "Passing Showers": "drizzle",
+    "Light Showers": "drizzle",
+    "Showers": "rain",
+    "Heavy Showers": "extreme-rain",
+    "Thundery Showers": "thunderstorms-rain",
+    "Heavy Thundery Showers": "thunderstorms-extreme-rain",
+    "Heavy Thundery Showers with Gusty Winds": "thunderstorms-extreme-rain",
+}
+# Sunrise and sunset barely move in Singapore -- roughly 7am and 7pm all year --
+# so a fixed pair is accurate enough to pick a sun or a moon by, and needs no
+# ephemeris.
+DAY_STARTS_HOUR = 7
+NIGHT_STARTS_HOUR = 19
+
+
+def weather_icon(text: str, now: datetime) -> str | None:
+    """Meteocons filename for an NEA forecast string, or None if unmapped."""
+    name = WEATHER_ICONS.get(text)
+    if not name:
+        return None
+    is_day = DAY_STARTS_HOUR <= now.hour < NIGHT_STARTS_HOUR
+    return name.replace("{dn}", "day" if is_day else "night")
+
 
 def current_period(periods: list[dict], now: datetime) -> dict | None:
     """The forecast period covering now, falling back to the first listed."""
@@ -134,6 +177,7 @@ def read_weather(now: datetime) -> dict | None:
         return None
     return {
         "text": forecast["text"],
+        "icon": weather_icon(forecast["text"], now),
         "low": temperature.get("low"),
         "high": temperature.get("high"),
         "region": WEATHER_REGION,
