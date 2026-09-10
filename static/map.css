@@ -186,6 +186,48 @@ body {
 .bus-row.arriving { border-left-color: #ff5a5a; }
 .bus-row.soon { border-left-color: #ffd166; }
 
+/* display:grid above beats the UA's [hidden] rule, so say it explicitly. */
+.bus-row[hidden] { display: none; }
+
+/* Hidden by default: the checkbox is a fourth grid child, and showing it
+   without widening the template would wrap the row onto a second line. */
+.svc-toggle {
+  display: none;
+  width: 22px;
+  height: 22px;
+  flex: none;
+}
+
+body[data-editing="1"] .svc-toggle { display: block; }
+
+body[data-editing="1"] .bus-row {
+  grid-template-columns: auto 4rem minmax(5.5rem, 1fr) auto;
+  cursor: default;
+}
+
+.map-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+
+#edit-toggle {
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 0.8rem;
+  color: #888;
+  background: #252525;
+  border: 1px solid #333;
+  border-radius: 6px;
+}
+
+body[data-editing="1"] #edit-toggle {
+  color: #111;
+  background: #7fd3ff;
+  border-color: #7fd3ff;
+}
+
 /* Only a bus with a position has a pin to open. */
 .bus-row[data-lat] { cursor: pointer; }
 .bus-row[data-lat]:active { background: #2f2f2f; }

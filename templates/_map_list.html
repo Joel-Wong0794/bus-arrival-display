@@ -26,8 +26,15 @@
     data-load="{{ bus.load or '' }}"
     data-destination="{{ bus.destination or '' }}"
     data-type="{{ bus.type_label or '' }}"
+    data-stop-code="{{ bus.stop_code }}"
+    data-service="{{ bus.service_no }}"
     {% if bus.type_label %}title="{{ bus.type_label }}"{% endif %}
   >
+    <input
+      type="checkbox"
+      class="svc-toggle"
+      aria-label="Show {{ bus.service_no }} at {{ bus.stop_name }}"
+    />
     {# Only the service number lives in column 1. Each row is its own grid
        container, so anything variable-width here lands every row's ETA at a
        different x — the destination rides in the context column instead. #}

@@ -9,7 +9,15 @@
     {% else %}
     <ul class="services">
       {% for service_no, buses in stop.services %}
-      <li>
+      {# Stop and service identify the row for the hide list. Keyed by both,
+         because 334 serves more than one of our stops and hiding it at one
+         must not hide it at the other. #}
+      <li data-stop="{{ stop.code }}" data-service="{{ service_no }}">
+        <input
+          type="checkbox"
+          class="svc-toggle"
+          aria-label="Show {{ service_no }} at {{ stop.name }}"
+        />
         {# Destination comes off the first bus: a service's queued buses share a
            destination in all but rare short-trip cases, and the tile has room
            for one label, not three. #}
@@ -41,4 +49,7 @@
   </div>
   {% endfor %}
 </div>
-<p class="updated">Updated {{ updated_at }}</p>
+<p class="updated">
+  <span id="hidden-note" hidden></span>
+  Updated {{ updated_at }}
+</p>

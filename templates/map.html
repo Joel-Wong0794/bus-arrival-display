@@ -10,6 +10,7 @@
     />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/htmx.org@2"></script>
+    <script src="{{ url_for('static', filename='services.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='map.css') }}" />
   </head>
   <body>
@@ -46,7 +47,10 @@
       {% else %}
       <span class="wx" aria-hidden="true">Buses near home</span>
       {% endif %}
-      <a class="map-back" href="/">Arrivals</a>
+      <span class="map-actions">
+        <button type="button" id="edit-toggle">Edit</button>
+        <a class="map-back" href="/">Arrivals</a>
+      </span>
     </header>
 
     {% if not home_missing %}
@@ -106,6 +110,9 @@
 
         for (var i = 0; i < rows.length; i++) {
           var row = rows[i];
+          // A hidden row contributes no marker, and leaving it out of `seen`
+          // means the cleanup below drops any pin it used to own.
+          if (row.hidden) continue;
           var key = row.getAttribute("data-key");
           var at = [
             parseFloat(row.getAttribute("data-lat")),
@@ -180,6 +187,9 @@
       // without a position carry no data-lat and stay inert.
       var list = document.getElementById("bus-list");
       list.addEventListener("click", function (event) {
+        // Ticking a checkbox must not also pan the map to that bus, and while
+        // editing the rows are controls rather than links.
+        if (event.target.className === "svc-toggle" || Services.editing) return;
         var row = event.target.closest(".bus-row[data-lat]");
         if (row) focusBus(row);
       });
@@ -191,7 +201,47 @@
         focusBus(row);
       });
 
-      document.body.addEventListener("htmx:afterSwap", syncMarkers);
+      // Re-applied after every swap, or hidden rows return on the next poll.
+      function applyHidden() {
+        var rows = document.querySelectorAll("#bus-list .bus-row[data-service]");
+        for (var i = 0; i < rows.length; i++) {
+          var row = rows[i];
+          var off = Services.isHidden(
+            row.getAttribute("data-stop-code"),
+            row.getAttribute("data-service")
+          );
+          // Visible while editing, so a hidden one can be found and restored.
+          row.hidden = off && !Services.editing;
+          var box = row.querySelector(".svc-toggle");
+          if (box) box.checked = !off;
+        }
+      }
+
+      var editToggle = document.getElementById("edit-toggle");
+      editToggle.addEventListener("click", function () {
+        Services.editing = !Services.editing;
+        document.body.setAttribute("data-editing", Services.editing ? "1" : "");
+        editToggle.textContent = Services.editing ? "Done" : "Edit";
+        applyHidden();
+        syncMarkers();
+      });
+
+      list.addEventListener("change", function (event) {
+        var row = event.target.parentNode;
+        if (!row || !row.getAttribute || !row.getAttribute("data-service")) return;
+        Services.toggle(
+          row.getAttribute("data-stop-code"),
+          row.getAttribute("data-service")
+        );
+        applyHidden();
+        syncMarkers();
+      });
+
+      document.body.addEventListener("htmx:afterSwap", function () {
+        applyHidden();
+        syncMarkers();
+      });
+      applyHidden();
       syncMarkers();
 
       // Waking the phone resumes a throttled poll only on its next tick.

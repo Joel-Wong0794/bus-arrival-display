@@ -120,6 +120,23 @@ Markers are keyed per vehicle, so a refresh moves a pin rather than rebuilding i
 
 Leaflet is loaded from a CDN; it is the only dependency beyond Flask, requests, python-dotenv and htmx. OneMap tiles require the SLA attribution that renders in the map's bottom-right corner — leave it in place.
 
+## Hiding Services
+
+Stop 28511 serves nine routes; most days you care about three. **Edit** on either page turns every row into a checkbox — untick what you don't want, tap **Done**. A `3 hidden` note sits beside the timestamp so nothing disappears silently.
+
+**The list is per device, not per stop-code config.** It lives in `localStorage`, so the kiosk can show everything while your phone shows only the routes you take. Nothing is stored server-side: no database, no env var, and a redeploy can't wipe it. Both pages share one list, since they are the same origin.
+
+**Keyed by stop *and* service.** 334 serves two of our stops; hiding it at Lakeside leaves the home stop alone.
+
+Two things to keep in mind if you change this code:
+
+- **Re-apply after every htmx swap.** The fragment is replaced wholesale each poll, so hidden rows come straight back unless `applyHidden()` runs on `htmx:afterSwap`. The test in the commit demonstrates this: a swap alone takes 9 visible rows back to 10.
+- **`[hidden]` needs help.** `.services li` and `.bus-row` set `display: flex`/`grid`, which beat the browser's `[hidden] { display: none }`. Both have an explicit `[hidden]` rule; delete it and hiding silently stops working.
+
+On `/map`, a hidden bus also loses its pin — `syncMarkers()` skips hidden rows, and the existing cleanup pass removes the marker.
+
+If a browser blocks storage (private mode, cleared site data, an old WebView), every operation is caught and the pages default to showing everything. The choice just won't persist.
+
 ## Weather
 
 The `/map` header shows NEA's current forecast for your region instead of a page title — by the time you have opened the page you know what it shows, and what you don't know is whether to take an umbrella to the stop.

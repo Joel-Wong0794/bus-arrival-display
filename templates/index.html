@@ -8,6 +8,7 @@
     />
     <title>Bus Arrivals</title>
     <script src="https://unpkg.com/htmx.org@2"></script>
+    <script src="{{ url_for('static', filename='services.js') }}"></script>
     <link
       rel="stylesheet"
       href="{{ url_for('static', filename='style.css') }}"
@@ -22,6 +23,7 @@
     >
       <p class="loading">Loading arrivals&hellip;</p>
     </div>
+    <button type="button" id="edit-toggle">Edit</button>
     <script>
       // The server bakes in a minute count at fetch time; age it down locally so
       // the tile is never stale between polls (or while Android throttles them).
@@ -44,8 +46,60 @@
           els[i].className = arriving ? "eta arriving" : soon ? "eta soon" : "eta";
         }
       }
+      // The fragment is replaced wholesale every poll, so hiding has to be
+      // re-applied after each swap or hidden services reappear on the next tick.
+      function applyHidden() {
+        var rows = document.querySelectorAll("#dashboard li[data-service]");
+        for (var i = 0; i < rows.length; i++) {
+          var row = rows[i];
+          var off = Services.isHidden(
+            row.getAttribute("data-stop"),
+            row.getAttribute("data-service")
+          );
+          // In edit mode every row stays visible, otherwise you could not find
+          // a hidden one to bring back.
+          row.hidden = off && !Services.editing;
+          // className, not classList, and a class rather than :has() — both
+          // are absent from the kiosk WebView.
+          row.className = off ? "svc-off" : "";
+          var box = row.querySelector(".svc-toggle");
+          if (box) box.checked = !off;
+        }
+        var note = document.getElementById("hidden-note");
+        if (note) {
+          var n = Services.count();
+          note.hidden = n === 0 || Services.editing;
+          note.textContent = n + (n === 1 ? " hidden" : " hidden") + " · ";
+        }
+      }
+
+      var editToggle = document.getElementById("edit-toggle");
+      editToggle.addEventListener("click", function () {
+        Services.editing = !Services.editing;
+        document.body.setAttribute(
+          "data-editing",
+          Services.editing ? "1" : ""
+        );
+        editToggle.textContent = Services.editing ? "Done" : "Edit";
+        applyHidden();
+      });
+
+      // Delegated, so it survives every swap of the fragment beneath it.
+      document.getElementById("dashboard").addEventListener("change", function (event) {
+        var row = event.target.parentNode;
+        if (!row || !row.getAttribute || !row.getAttribute("data-service")) return;
+        Services.toggle(
+          row.getAttribute("data-stop"),
+          row.getAttribute("data-service")
+        );
+        applyHidden();
+      });
+
       setInterval(tickEtas, 1000);
-      document.body.addEventListener("htmx:afterSwap", tickEtas);
+      document.body.addEventListener("htmx:afterSwap", function () {
+        tickEtas();
+        applyHidden();
+      });
       // Waking the tablet resumes a throttled poll timer only on its next tick.
       document.addEventListener("visibilitychange", function () {
         if (!document.hidden) htmx.trigger("#dashboard", "refresh");

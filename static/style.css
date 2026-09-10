@@ -76,6 +76,51 @@ body {
   min-width: 0;
 }
 
+/* The UA's [hidden] rule is display:none, but the rule above sets display:flex
+   and wins on specificity — without this, hiding a row would do nothing. */
+.services li[hidden] {
+  display: none;
+}
+
+/* Only in edit mode, so a glance at the board is never cluttered by controls. */
+.svc-toggle {
+  display: none;
+  width: 22px;
+  height: 22px;
+  margin-right: 10px;
+  flex: none;
+}
+
+body[data-editing="1"] .svc-toggle {
+  display: block;
+}
+
+/* A hidden row still shows while editing, dimmed, so it can be found and
+   brought back. Flagged by a class from JS rather than :has(), which the
+   kiosk WebView does not support. */
+body[data-editing="1"] .services li.svc-off {
+  opacity: 0.45;
+}
+
+#edit-toggle {
+  position: fixed;
+  bottom: 4px;
+  left: 8px;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 0.8rem;
+  color: #888;
+  background: #252525;
+  border: 1px solid #333;
+  border-radius: 6px;
+}
+
+body[data-editing="1"] #edit-toggle {
+  color: #111;
+  background: #7fd3ff;
+  border-color: #7fd3ff;
+}
+
 .service-no {
   font-weight: bold;
 }
