@@ -110,7 +110,8 @@
       <span class="dot arriving"></span> Arriving
       <span class="dot soon"></span> {% if window_minutes %}Within {{ window_minutes }} min{% else %}Due{% endif %}
       {% if show_focus_pin %}
-      <span class="dot home"></span> {{ selected.name if selected else "Home" }}
+      <span class="dot {{ 'stop' if selected else 'home' }}"></span>
+      {{ selected.name if selected else "Home" }}
       {% endif %}
     </p>
 
@@ -134,12 +135,19 @@
       }).addTo(map);
 
       {% if show_focus_pin %}
+      {# A ring for a stop, a solid dot for home: same colour family, but you
+         can tell at a glance whether the map is centred on where you live or
+         on a stop you went looking for. #}
       L.marker(FOCUS, {
-        icon: L.divIcon({ className: "home-pin", html: "", iconSize: [16, 16] }),
+        icon: L.divIcon({
+          className: {{ ("stop-pin" if selected else "home-pin") | tojson }},
+          html: "",
+          iconSize: [{{ 20 if selected else 16 }}, {{ 20 if selected else 16 }}],
+        }),
         zIndexOffset: 1000,
       })
         .addTo(map)
-        .bindPopup({{ (selected.name if selected else "Home") | tojson }});
+        .bindPopup({{ (selected.name ~ " (" ~ selected.code ~ ")" if selected else "Home") | tojson }});
       {% endif %}
 
       // Keyed by vehicle so a refresh moves a marker rather than replacing it —

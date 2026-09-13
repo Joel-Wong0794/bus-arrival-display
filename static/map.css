@@ -230,6 +230,15 @@ body {
   box-shadow: 0 0 0 4px rgba(127, 211, 255, 0.25);
 }
 
+/* The stop you went looking for: a ring, so it reads as a place on the map
+   rather than as another vehicle, and is never mistaken for the home dot. */
+.stop-pin {
+  border-radius: 50%;
+  background: #111;
+  border: 4px solid #7fd3ff;
+  box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.9), 0 0 0 6px rgba(127, 211, 255, 0.3);
+}
+
 /* Leaflet's chrome ships light; repaint it for the dark page. */
 .leaflet-container { background: #1c1c1c; }
 
@@ -375,5 +384,12 @@ body {
 .dot.arriving { background: #ff5a5a; }
 .dot.soon { background: #ffd166; }
 .dot.home { background: #7fd3ff; }
+
+.dot.stop {
+  background: transparent;
+  border: 3px solid #7fd3ff;
+  width: 11px;
+  height: 11px;
+}
 
 .dot + .dot { margin-left: 10px; }

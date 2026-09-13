@@ -213,11 +213,71 @@ def stop_name(code: str) -> str:
     return BUS_STOPS.get(code, {}).get("name") or code
 
 
-def stop_position(code: str) -> tuple[float, float] | None:
-    """Where a stop is, or None if the lookup predates coordinates."""
+BUS_STOPS_URL = "https://datamall2.mytransport.sg/ltaodataservice/BusStops"
+# Positions found at runtime for stops the baked file has none for. Misses are
+# remembered too, so a stop is asked about at most once per warm instance.
+_position_cache: dict[str, tuple[float, float] | None] = {}
+
+
+def fetch_stop_position(code: str) -> tuple[float, float] | None:
+    """Ask DataMall where one stop is. None on anything unexpected.
+
+    Only reached when data/bus_stops.json has no position for the stop, which a
+    regeneration fixes permanently — this is the fallback, not the plan. It is
+    affordable because the feed now filters by stop code (guide v6.8); the whole
+    reason the file is baked is that asking used to mean paging ~5000 rows.
+
+    Fails to None rather than raising: a missing pin is a smaller problem than a
+    map page that will not load.
+    """
+    try:
+        response = requests.get(
+            BUS_STOPS_URL,
+            headers={"AccountKey": API_KEY, "accept": "application/json"},
+            params={"BusStopCode": code},
+            timeout=5,
+        )
+        response.raise_for_status()
+        rows = response.json().get("value", [])
+    except (requests.RequestException, ValueError):
+        return None
+    for row in rows:
+        # Checked rather than assumed: an unsupported filter returns the first
+        # page of every stop rather than an error, and the wrong stop's position
+        # would put the pin somewhere plausible and wrong.
+        if row.get("BusStopCode") != code:
+            continue
+        try:
+            lat, lon = float(row.get("Latitude") or 0), float(row.get("Longitude") or 0)
+        except (TypeError, ValueError):
+            return None
+        return (lat, lon) if lat and lon else None
+    return None
+
+
+def baked_position(code: str) -> tuple[float, float] | None:
+    """Where a stop is according to the file alone. Never calls out.
+
+    Kept separate from stop_position because the nearby scan asks about all
+    ~5000 stops: routing that through the fallback would fire one request per
+    stop on a file with no coordinates.
+    """
     entry = BUS_STOPS.get(code, {})
     lat, lon = entry.get("lat"), entry.get("lon")
     return (lat, lon) if lat is not None and lon is not None else None
+
+
+def stop_position(code: str) -> tuple[float, float] | None:
+    """Where one stop is, from the baked lookup or, failing that, from the feed.
+
+    For the single focused stop only — see baked_position for bulk lookups.
+    """
+    position = baked_position(code)
+    if position is not None:
+        return position
+    if code not in _position_cache:
+        _position_cache[code] = fetch_stop_position(code)
+    return _position_cache[code]
 
 
 def destination_label(next_bus: dict) -> str | None:
@@ -297,7 +357,7 @@ def find_nearby_stops() -> list[dict]:
         return []
     found = []
     for code, entry in BUS_STOPS.items():
-        position = stop_position(code)
+        position = baked_position(code)
         if position is None:
             continue
         metres = haversine_m(*HOME, *position)

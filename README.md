@@ -141,7 +141,11 @@ Picking a stop changes what the page means, so the home comparison is dropped en
 | Focus pin | Home | The stop |
 | Needs `HOME_LAT`/`HOME_LON` | Yes | **No** |
 
-Distances would be meaningless measured from the flat to a stop across the island, so they come from the selected stop instead — and are omitted entirely if the lookup has no coordinates for it, which is better than quoting a number from the wrong origin. A bus with no GPS fix still says so; a tracked bus with no reference point simply shows nothing rather than contradicting its own pin.
+Distances would be meaningless measured from the flat to a stop across the island, so they come from the selected stop instead — and are omitted entirely if its position cannot be established, which is better than quoting a number from the wrong origin. A bus with no GPS fix still says so; a tracked bus with no reference point simply shows nothing rather than contradicting its own pin.
+
+The focused stop gets a **ring** marker, against the solid dot used for home — same colour, but you can tell at a glance whether the map is centred on where you live or on somewhere you went looking for.
+
+Positions come from `data/bus_stops.json`. When it has none for the focused stop — an un-regenerated file — one filtered `BusStops` request fills the gap and is remembered for the life of the instance. That fallback is affordable only because the feed now filters by stop code (guide v6.8); asking used to mean paging ~5,000 rows, which is why the file is baked in the first place. It is a safety net, not the plan: a regenerated file skips it entirely. Rows whose code does not match are discarded, since an unsupported filter returns a page of unrelated stops rather than an error, and a pin placed from one of those would be plausible and wrong.
 
 Stop codes from the URL are validated as five digits before being used, so a hand-edited URL cannot forward junk to DataMall.
 
