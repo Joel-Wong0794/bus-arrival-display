@@ -113,8 +113,12 @@ body {
   outline-offset: 2px;
 }
 
+/* Leaflet puts its control corners at z-index 1000, so the results panel has to
+   clear that or the zoom buttons punch through it. Raising the whole control
+   rather than the panel alone means one stacking context to reason about. */
 .stop-search {
   position: relative;
+  z-index: 1100;
   margin-bottom: 10px;
 }
 
@@ -140,7 +144,6 @@ body {
    type don't shove the page around under your thumb. */
 .stop-results {
   position: absolute;
-  z-index: 500;
   left: 0;
   right: 0;
   top: calc(100% + 4px);
@@ -182,7 +185,6 @@ body {
 
 .stop-none {
   position: absolute;
-  z-index: 500;
   left: 0;
   right: 0;
   top: calc(100% + 4px);
