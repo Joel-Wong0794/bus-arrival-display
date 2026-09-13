@@ -34,7 +34,8 @@ Two pages, for two different questions:
 | `BUFFER_SECONDS`  | 30      | Seconds shaved off every ETA as a safety margin. Combined with floor-rounding, a 30s buffer means anything under 1m30s shows as "Arr" (red, bold). Set to 0 to disable. |
 | `HOME_LAT`        | —       | Required for `/map` only. Latitude the map centres on and distances are measured from. No default — an address does not belong in the repo.                              |
 | `HOME_LON`        | —       | Required for `/map` only. Longitude, as above.                                                                                                                          |
-| `MAP_WINDOW_MINUTES` | 5    | Only buses arriving within this many minutes are pinned on `/map`.                                                                                                      |
+| `MAP_WINDOW_MINUTES` | 5    | Only buses arriving within this many minutes are pinned on `/map`. Home view only — picking a stop shows everything running there.                                       |
+| `NEARBY_RADIUS_M` | 800     | How far from home the stop picker looks for stops to offer. Needs a `bus_stops.json` carrying coordinates; without one the picker lists only `BUS_STOP_CODES`.           |
 | `WEATHER_API_KEY` | —       | Optional. `x-api-key` for data.gov.sg. The endpoint works without one; a key only raises the rate limit.                                                                 |
 | `WEATHER_REGION`  | `west`  | Which NEA forecast region you are in: `north`, `south`, `east`, `west`, `central`. Cannot be derived from `HOME_LAT`/`HOME_LON` — the feed ships no boundaries.          |
 | `WEATHER_TTL_SECONDS` | 900 | How long a fetched forecast is reused before re-fetching.                                                                                                              |
@@ -89,6 +90,10 @@ The arrival feed names a destination only by bus stop code (`22009`), and the `B
 python scripts/fetch_bus_stops.py
 ```
 
+The file holds a name **and position** per stop — `{"name": ..., "lat": ..., "lon": ...}` — since the `BusStops` response carries coordinates in the same rows the names come from. Positions are what let the picker offer nearby stops and measure distance from a selected one.
+
+A file predating that change (plain `"Hotel Grand Pacific"` values) is read without complaint; those features simply stay switched off until it is regenerated. The script prints how many stops came back without coordinates — anything other than a small number means the `Latitude`/`Longitude` fields have been renamed upstream.
+
 A stale or missing file degrades rather than breaks: an unknown code falls back to displaying the raw code, and if the file is absent entirely every destination does. `vercel.json` includes `data/**` so the file ships with the function.
 
 ## Vehicle Type
@@ -117,6 +122,26 @@ Three things worth knowing about the data:
 - **Positions are up to ~20s stale.** That is DataMall's publish interval. Markers jump rather than glide, because interpolating would imply a precision the feed does not have.
 
 Markers are keyed per vehicle, so a refresh moves a pin rather than rebuilding it — otherwise an open popup would slam shut every poll. The view is framed once on load and never re-fitted, so a refresh cannot yank the map while you are panning it.
+
+### Picking a stop
+
+The picker at the top switches the page to any stop: `/map?stop=28519`.
+
+The selection lives **in the URL**, not on the server. That is deliberate — an environment variable is shared by every page the app serves, so writing the selection back into one would mean tapping the picker on your phone changed what the kiosk tablet displays. It would also not survive: on Vercel each request may be answered by a different instance, so the write would apply to whichever machine happened to catch it. A query parameter is per-tab, bookmarkable, and cannot leak into `/`.
+
+Picking a stop changes what the page means, so the home comparison is dropped entirely:
+
+| | Home view (no selection) | Stop selected |
+| --- | --- | --- |
+| Question | "Should I leave the flat now?" | "What's coming at this stop?" |
+| Distances measured from | `HOME` | That stop |
+| Arrival window | `MAP_WINDOW_MINUTES` | None — everything running |
+| Focus pin | Home | The stop |
+| Needs `HOME_LAT`/`HOME_LON` | Yes | **No** |
+
+Distances would be meaningless measured from the flat to a stop across the island, so they come from the selected stop instead — and are omitted entirely if the lookup has no coordinates for it, which is better than quoting a number from the wrong origin. A bus with no GPS fix still says so; a tracked bus with no reference point simply shows nothing rather than contradicting its own pin.
+
+Stop codes from the URL are validated as five digits before being used, so a hand-edited URL cannot forward junk to DataMall.
 
 Leaflet is loaded from a CDN; it is the only dependency beyond Flask, requests, python-dotenv and htmx. OneMap tiles require the SLA attribution that renders in the map's bottom-right corner — leave it in place.
 

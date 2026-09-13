@@ -90,6 +90,29 @@ body {
   text-decoration: none;
 }
 
+.stop-picker {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.stop-picker select {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.9rem;
+  color: #f5f5f5;
+  background: #252525;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 9px 11px;
+}
+
+.stop-picker select:focus-visible {
+  outline: 2px solid #7fd3ff;
+  outline-offset: 2px;
+}
+
 .map-frame {
   height: 55vh;
   min-height: 280px;

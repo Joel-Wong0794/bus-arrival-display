@@ -49,7 +49,32 @@
       <a class="map-back" href="/">Arrivals</a>
     </header>
 
-    {% if not home_missing %}
+    {# A plain GET form: the selection belongs in the URL, so it survives a
+       reload, can be bookmarked, and never becomes server state that the
+       kiosk could pick up. Submits on change, and still works without JS. #}
+    <form class="stop-picker" method="get" action="/map">
+      <select name="stop" aria-label="Which stop to focus on">
+        <option value="">Near home</option>
+        {% for option in options %}
+        <option value="{{ option.code }}" {{ 'selected' if selected and selected.code == option.code }}>
+          {{ option.name }} ({{ option.code }}){% if option.away %} &middot; {{ option.away }}{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+      <noscript><button type="submit">Show</button></noscript>
+    </form>
+    <script>
+      // Outside the map's script block on purpose: the picker has to work even
+      // when HOME is unconfigured and no map is drawn.
+      document.querySelector(".stop-picker select").addEventListener(
+        "change",
+        function () {
+          this.form.submit();
+        }
+      );
+    </script>
+
+    {% if not home_missing or mode == "stop" %}
     <div id="map" class="map-frame"></div>
     {% endif %}
 
@@ -57,7 +82,7 @@
          costs one API call rather than two. -->
     <div
       id="bus-list"
-      hx-get="/map-list"
+      hx-get="/map-list{{ '?stop=' ~ selected.code if selected }}"
       hx-trigger="every {{ refresh_seconds }}s, refresh"
       hx-swap="innerHTML"
     >
@@ -66,15 +91,19 @@
 
     <p class="map-legend">
       <span class="dot arriving"></span> Arriving
-      <span class="dot soon"></span> Within {{ window_minutes }} min
-      <span class="dot home"></span> Home
+      <span class="dot soon"></span> {% if window_minutes %}Within {{ window_minutes }} min{% else %}Due{% endif %}
+      {% if show_focus_pin %}
+      <span class="dot home"></span> {{ selected.name if selected else "Home" }}
+      {% endif %}
     </p>
 
-    {% if not home_missing %}
+    {% if not home_missing or mode == "stop" %}
     <script>
-      var HOME = [{{ home_lat }}, {{ home_lon }}];
+      // Null when a picked stop predates coordinates in the lookup; the map
+      // then frames the buses themselves, which carry their own positions.
+      var FOCUS = {% if focus_lat is not none %}[{{ focus_lat }}, {{ focus_lon }}]{% else %}null{% endif %};
 
-      var map = L.map("map", { zoomControl: true }).setView(HOME, 15);
+      var map = L.map("map", { zoomControl: true }).setView(FOCUS || [1.3521, 103.8198], 15);
 
       L.tileLayer("https://www.onemap.gov.sg/maps/tiles/Night/{z}/{x}/{y}.png", {
         minZoom: 11,
@@ -87,12 +116,14 @@
           '<a href="https://www.sla.gov.sg/">Singapore Land Authority</a>',
       }).addTo(map);
 
-      L.marker(HOME, {
+      {% if show_focus_pin %}
+      L.marker(FOCUS, {
         icon: L.divIcon({ className: "home-pin", html: "", iconSize: [16, 16] }),
         zIndexOffset: 1000,
       })
         .addTo(map)
-        .bindPopup("Home");
+        .bindPopup({{ (selected.name if selected else "Home") | tojson }});
+      {% endif %}
 
       // Keyed by vehicle so a refresh moves a marker rather than replacing it —
       // rebuilding them would slam shut any popup that was open.
@@ -102,7 +133,7 @@
       function syncMarkers() {
         var rows = document.querySelectorAll("#bus-list .bus-row[data-lat]");
         var seen = {};
-        var points = [HOME];
+        var points = FOCUS ? [FOCUS] : [];
 
         for (var i = 0; i < rows.length; i++) {
           var row = rows[i];
@@ -149,7 +180,7 @@
 
         // Frame everything once. Re-fitting on each poll would yank the map back
         // every 10 seconds and fight any panning.
-        if (!fitted && points.length > 1) {
+        if (!fitted && points.length > (FOCUS ? 1 : 0)) {
           map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 17 });
           fitted = true;
         }
