@@ -35,9 +35,12 @@
     <span class="bus-meta">
       <span class="bus-eta">{{ "Arr" if bus.minutes == 0 else bus.minutes ~ " min" }}</span>
       <span class="bus-where">
+        {# Two different silences: a bus with no GPS fix says so, but a tracked
+           bus we simply have no reference point to measure from says nothing —
+           claiming "no live position" there would contradict its own pin. #}
         {% if bus.distance %}
         {{ bus.distance }}
-        {% else %}
+        {% elif bus.lat is none %}
         no live position
         {% endif %}
       </span>
@@ -51,7 +54,13 @@
   {% endfor %}
 </ul>
 {% else %}
-<p class="bus-empty">Nothing arriving within {{ window_minutes }} min.</p>
+<p class="bus-empty">
+  {% if mode == "stop" %}
+  Nothing running at {{ selected.name }} right now.
+  {% else %}
+  Nothing arriving within {{ window_minutes }} min.
+  {% endif %}
+</p>
 {% endif %}
 
 {% if untracked %}
