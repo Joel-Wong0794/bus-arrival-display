@@ -1,0 +1,14 @@
+{% if results %}
+<ul class="stop-results">
+  {% for stop in results %}
+  <li>
+    <a href="/map?stop={{ stop.code }}">
+      <span class="stop-result-name">{{ stop.name }}</span>
+      <span class="stop-result-code">{{ stop.code }}</span>
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% elif query | length >= 2 %}
+<p class="stop-none">No stop matches &ldquo;{{ query }}&rdquo;.</p>
+{% endif %}

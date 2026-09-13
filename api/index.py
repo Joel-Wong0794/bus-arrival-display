@@ -324,6 +324,33 @@ def valid_stop_code(code: str | None) -> str | None:
     return None
 
 
+def search_stops(query: str | None, limit: int = 12) -> list[dict]:
+    """Stops whose name or code matches, closest-looking matches first.
+
+    Works against a lookup with no coordinates, because choosing a stop by name
+    never needed a position — only the nearby list does. Scanning all 5000 on
+    each keystroke is microseconds, and saves shipping the whole set to a phone.
+    """
+    query = (query or "").strip().lower()
+    if len(query) < 2:
+        return []
+    hits = []
+    for code, entry in BUS_STOPS.items():
+        name = entry.get("name") or ""
+        lowered = name.lower()
+        if code.startswith(query):
+            rank = 0
+        elif lowered.startswith(query):
+            rank = 1
+        elif query in lowered:
+            rank = 2
+        else:
+            continue
+        hits.append((rank, name, code))
+    hits.sort()
+    return [{"code": code, "name": name} for _, name, code in hits[:limit]]
+
+
 def picker_options(selected_code: str | None) -> list[dict]:
     """Stops offered in the picker: the configured ones, then whatever is near.
 
@@ -562,6 +589,18 @@ def bus_map():
             refresh_seconds=REFRESH_SECONDS,
             weather=read_weather(now),
             **map_context(now, request.args.get("stop")),
+        )
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/stops")
+def stop_search():
+    query = request.args.get("q", "")
+    response = make_response(
+        render_template(
+            "_stop_results.html", results=search_stops(query), query=query.strip()
         )
     )
     response.headers["Cache-Control"] = "no-store"

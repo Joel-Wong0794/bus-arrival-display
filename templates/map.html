@@ -63,6 +63,23 @@
       </select>
       <noscript><button type="submit">Show</button></noscript>
     </form>
+
+    {# Outside the form above, so typing can never submit it. Searches names
+       rather than listing all 5000 stops, which would be a quarter of a
+       megabyte of markup on every page load. #}
+    <div class="stop-search">
+      <input
+        type="search"
+        name="q"
+        placeholder="Search any stop by name or code"
+        aria-label="Search any bus stop by name or code"
+        autocomplete="off"
+        hx-get="/stops"
+        hx-trigger="input changed delay:250ms, search"
+        hx-target="#stop-results"
+      />
+      <div id="stop-results"></div>
+    </div>
     <script>
       // Outside the map's script block on purpose: the picker has to work even
       // when HOME is unconfigured and no map is drawn.

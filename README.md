@@ -127,6 +127,8 @@ Markers are keyed per vehicle, so a refresh moves a pin rather than rebuilding i
 
 The picker at the top switches the page to any stop: `/map?stop=28519`.
 
+The dropdown holds the quick picks — your configured stops, plus nearby ones once the lookup has coordinates. The search box beside it reaches **any of the ~5,200 stops** by name or code, and works whether or not the lookup has positions: choosing a stop by name never needed one. Matching happens server-side and returns a dozen results at a time, rather than shipping a quarter of a megabyte of options to a phone on every page load.
+
 The selection lives **in the URL**, not on the server. That is deliberate — an environment variable is shared by every page the app serves, so writing the selection back into one would mean tapping the picker on your phone changed what the kiosk tablet displays. It would also not survive: on Vercel each request may be answered by a different instance, so the write would apply to whichever machine happened to catch it. A query parameter is per-tab, bookmarkable, and cannot leak into `/`.
 
 Picking a stop changes what the page means, so the home comparison is dropped entirely:

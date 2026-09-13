@@ -113,6 +113,88 @@ body {
   outline-offset: 2px;
 }
 
+.stop-search {
+  position: relative;
+  margin-bottom: 10px;
+}
+
+.stop-search input {
+  width: 100%;
+  font: inherit;
+  font-size: 0.9rem;
+  color: #f5f5f5;
+  background: #1c1c1c;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 9px 11px;
+}
+
+.stop-search input::placeholder { color: #666; }
+
+.stop-search input:focus-visible {
+  outline: 2px solid #7fd3ff;
+  outline-offset: 2px;
+}
+
+/* Floats over the map rather than pushing it down, so results appearing as you
+   type don't shove the page around under your thumb. */
+.stop-results {
+  position: absolute;
+  z-index: 500;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  max-height: 44vh;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: #1c1c1c;
+  border: 1px solid #333;
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.6);
+}
+
+.stop-results li + li { border-top: 1px solid #2a2a2a; }
+
+.stop-results a {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  color: #f5f5f5;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.stop-results a:hover,
+.stop-results a:focus-visible {
+  background: #252525;
+  outline: none;
+}
+
+.stop-result-code {
+  color: #8b8b8b;
+  font-size: 0.78rem;
+  flex: none;
+}
+
+.stop-none {
+  position: absolute;
+  z-index: 500;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  margin: 0;
+  padding: 10px 12px;
+  background: #1c1c1c;
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: #8b8b8b;
+  font-size: 0.85rem;
+}
+
 .map-frame {
   height: 55vh;
   min-height: 280px;
