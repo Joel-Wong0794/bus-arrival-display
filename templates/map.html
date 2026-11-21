@@ -11,6 +11,7 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/htmx.org@2"></script>
     <script src="{{ url_for('static', filename='glide.js') }}"></script>
+    <script src="{{ url_for('static', filename='accuracy.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='map.css') }}" />
   </head>
   <body>
@@ -106,6 +107,17 @@
     >
       {% include "_map_list.html" %}
     </div>
+
+    {% if not home_missing or mode == "stop" %}
+    {# Filled by renderAccuracy() below, and only once a bus has actually
+       reached its stop while the page was open. Outside #bus-list so the
+       20s htmx swap cannot wipe it. Hidden until there is something to say. #}
+    <section id="accuracy" class="accuracy" hidden aria-live="polite">
+      <h2 class="accuracy-title">LTA vs actual, this visit</h2>
+      <p class="accuracy-summary"></p>
+      <ul class="accuracy-list"></ul>
+    </section>
+    {% endif %}
 
     <p class="map-legend">
       <span class="dot arriving"></span> Arriving
@@ -257,10 +269,22 @@
             marker = L.marker(at, { icon: busIcon(no, tier) })
               .addTo(map)
               .bindPopup(detail);
+            // A new pin is a newly seen bus: remember what LTA promises now.
+            // Only here, not on every poll — later, revised predictions are
+            // not what you planned your walk around.
+            var promised = parseInt(row.getAttribute("data-arrival"), 10);
+            marker._watch = promised ? Accuracy.watch(promised, now) : null;
           }
           marker._group = groupKey;
           anchor(marker, at, row, now);
           markers[key] = marker;
+
+          // LTA vs actual: did this fix put the bus at its stop? Needs the
+          // stop's position, which anchor() has just set on _glide.
+          if (marker._glide) {
+            var record = Accuracy.check(marker._watch, at.distanceTo(marker._glide.stop), now);
+            if (record) logArrival(record, no, row.getAttribute("data-stop"));
+          }
         }
 
         // Unclaimed: the bus passed the stop, left the window, or lost GPS.
@@ -273,6 +297,48 @@
         if (!fitted && points.length > (FOCUS ? 1 : 0)) {
           map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 17 });
           fitted = true;
+        }
+      }
+
+      // Every bus judged so far this visit, newest first. In memory only:
+      // closing or reloading the tab starts over (see static/accuracy.js).
+      var arrivals = [];
+
+      function logArrival(record, no, stop) {
+        record.no = no;
+        record.stop = stop;
+        arrivals.unshift(record);
+        renderAccuracy();
+      }
+
+      function clock(ms) {
+        return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      }
+
+      // textContent throughout: stop names come from LTA's data, not ours.
+      function renderAccuracy() {
+        var box = document.getElementById("accuracy");
+        var sum = Accuracy.summarize(arrivals);
+        if (!sum) return;
+        box.hidden = false;
+        box.querySelector(".accuracy-summary").textContent =
+          sum.count + (sum.count === 1 ? " bus" : " buses") +
+          " · on average " + Accuracy.describeMiss(sum.meanMissS) +
+          " · " + sum.withinMinute + " of " + sum.count + " within a minute";
+        var list = box.querySelector(".accuracy-list");
+        list.textContent = "";
+        for (var i = 0; i < arrivals.length; i++) {
+          var r = arrivals[i];
+          var item = document.createElement("li");
+          var verdict = Accuracy.describe(r.errorS);
+          // Same colour language as the tiers: late = amber, early = red
+          // (early is the costly miss: you were told you had time), else plain.
+          item.className = verdict === "on time" ? "" : r.errorS > 0 ? "late" : "early";
+          item.textContent =
+            r.no + " · LTA said " + clock(r.predicted) + ", arrived " + clock(r.arrived) +
+            " · " + verdict + " (predicted " + Math.round(r.leadS / 60) + " min ahead)";
+          item.title = r.stop;
+          list.appendChild(item);
         }
       }
 

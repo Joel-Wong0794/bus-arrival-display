@@ -59,16 +59,29 @@ var Accuracy = (function () {
     return minutes + " min " + (errorS > 0 ? "late" : "early");
   }
 
-  /** Count, mean error and share within a minute, or null with no records. */
+  /**
+   * Count, average miss and share within a minute, or null with no records.
+   *
+   * The average is of the miss's size, ignoring direction. A signed average
+   * lets a 3-min-late bus and a 3-min-early one cancel into "on time", which
+   * is the one verdict neither of them earned.
+   */
   function summarize(records) {
     if (!records.length) return null;
     var total = 0;
     var close = 0;
     for (var i = 0; i < records.length; i++) {
-      total += records[i].errorS;
-      if (Math.abs(records[i].errorS) <= 60) close++;
+      var miss = Math.abs(records[i].errorS);
+      total += miss;
+      if (miss <= 60) close++;
     }
-    return { count: records.length, meanErrorS: Math.round(total / records.length), withinMinute: close };
+    return { count: records.length, meanMissS: Math.round(total / records.length), withinMinute: close };
+  }
+
+  /** "off by 2 min" or "within half a minute" for an average miss in seconds. */
+  function describeMiss(missS) {
+    var minutes = Math.round(missS / 60);
+    return minutes === 0 ? "within half a minute" : "off by " + minutes + " min";
   }
 
   return {
@@ -77,6 +90,7 @@ var Accuracy = (function () {
     watch: watch,
     check: check,
     describe: describe,
+    describeMiss: describeMiss,
     summarize: summarize,
   };
 })();

@@ -28,11 +28,14 @@ assert.equal(Accuracy.describe(120), "2 min late");
 assert.equal(Accuracy.describe(-70), "1 min early");
 assert.equal(Accuracy.describe(25), "on time");
 
-// Summary.
+// Summary averages the size of the miss: late and early must not cancel.
 assert.equal(Accuracy.summarize([]), null);
 assert.deepEqual(
   Accuracy.summarize([{ errorS: 120 }, { errorS: -30 }, { errorS: 0 }]),
-  { count: 3, meanErrorS: 30, withinMinute: 2 }
+  { count: 3, meanMissS: 50, withinMinute: 2 }
 );
+assert.equal(Accuracy.summarize([{ errorS: 150 }, { errorS: -120 }]).meanMissS, 135);
+assert.equal(Accuracy.describeMiss(135), "off by 2 min");
+assert.equal(Accuracy.describeMiss(20), "within half a minute");
 
 console.log("accuracy.js: all checks passed");

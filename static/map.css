@@ -395,3 +395,35 @@ body {
 }
 
 .dot + .dot { margin-left: 10px; }
+
+/* "LTA vs actual" readout, filled by renderAccuracy() in map.html. Quiet
+   like the notes above it: it is for the second glance, not the first. */
+.accuracy {
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: #1c1c1c;
+  border: 1px solid #333;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  color: #aaa;
+}
+
+.accuracy-title {
+  margin: 0 0 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #ddd;
+}
+
+.accuracy-summary { margin: 0 0 6px; }
+
+.accuracy-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.accuracy-list li { padding: 3px 0; overflow-wrap: anywhere; }
+.accuracy-list li + li { border-top: 1px solid #2a2a2a; }
+.accuracy-list li.late { color: #ffd166; }
+.accuracy-list li.early { color: #ff5a5a; }
