@@ -90,6 +90,14 @@ The arrival feed names a destination only by bus stop code (`22009`), and the `B
 python scripts/fetch_bus_stops.py
 ```
 
+The map's route-following glide also needs `data/bus_routes.json` — every service's road line — baked **after** the stops file, since it places each stop on its line using the positions there:
+
+```
+python scripts/fetch_bus_routes.py
+```
+
+It downloads from [sgbusdata](https://github.com/cheeaun/sgbusdata) on GitHub (~550 KB, no DataMall key or calls) and takes a few seconds. Re-run it when routes change; sgbusdata refreshes from LTA on its own schedule, and the file records which update it was baked from. Without the file, pins glide in a straight line instead.
+
 The file holds a name **and position** per stop — `{"name": ..., "lat": ..., "lon": ...}` — since the `BusStops` response carries coordinates in the same rows the names come from. Positions are what let the picker offer nearby stops and measure distance from a selected one.
 
 A file predating that change (plain `"Hotel Grand Pacific"` values) is read without complaint; those features simply stay switched off until it is regenerated. The script prints how many stops came back without coordinates — anything other than a small number means the `Latitude`/`Longitude` fields have been renamed upstream.
@@ -111,17 +119,78 @@ The popup matters more than the tooltip: `title` tooltips need a mouse, so they 
 
 ## Map Page
 
-`/map` answers a different question: not *when* the bus arrives but *where it is now*. Buses arriving within `MAP_WINDOW_MINUTES` are pinned on a [OneMap](https://www.onemap.gov.sg/) layer via Leaflet, each pin labelled with its service number and coloured by the same tiers above. Below the map, the same buses are listed with ETA, straight-line distance, stop name and code, destination, and crowding. Tapping a row pans to that bus and opens its pin.
+`/map` answers a different question: not *when* the bus arrives but *where it is now*. Buses arriving within `MAP_WINDOW_MINUTES` are pinned on a [OneMap](https://www.onemap.gov.sg/) layer via Leaflet, each pin labelled with its service number and coloured by the same tiers above. Below the map, the same buses are listed with ETA, distance, stop name and code, destination, and crowding. Tapping a row pans to that bus and opens its pin.
 
 Filtering by **time** rather than by rank is deliberate: a service's second bus appears exactly when it is also imminent, so no "show all / show next" toggle is needed.
 
 Three things worth knowing about the data:
 
 - **Not every bus can be plotted.** DataMall only sends real coordinates when `Monitored` is `1`. On a schedule-derived estimate it sends the string `"0.0"`, which would place the bus in the Atlantic, so those buses are listed but never pinned — a bus two minutes away still matters when it has no GPS fix. The count of them appears under the list.
-- **Distance is straight-line, not road distance.** A bus 400 m away as the crow flies can be 2 km away by road.
-- **Positions are up to ~20s stale.** That is DataMall's publish interval. Markers jump rather than glide, because interpolating would imply a precision the feed does not have.
+- **Distance is straight-line from home, by road from a picked stop.** No route passes the flat, so the home view measures as the crow flies — a bus 400 m away that way can be 2 km by road. Measured from a picked stop, a bus that fits its route quotes the drive (`1.3 km by road`); on live data that ran up to ~25% longer than the straight line.
+- **Positions are up to ~20s stale.** That is DataMall's publish interval. Between fixes the pins glide towards the stop, paced by LTA's arrival time — see [Gliding pins](#gliding-pins) for what that does and does not claim.
 
 Markers are keyed per vehicle, so a refresh moves a pin rather than rebuilding it — otherwise an open popup would slam shut every poll. The view is framed once on load and never re-fitted, so a refresh cannot yank the map while you are panning it.
+
+### Gliding pins
+
+A pin that only moved on each GPS fix sat still for ~20s and then teleported. Pins now glide along the bus's route in between, using the "shadow bus" model from [Next Stop's write-up](https://nextstopsg.app/interpolation.html), cut down to what DataMall's data supports.
+
+LTA gives two things per bus: where its GPS last put it, and when it should reach the stop. The second sets a pace. An invisible *shadow bus* drives along the route from the last fix towards the stop at that pace, and the visible pin follows it.
+
+**The route.** DataMall has stop sequences but no route shapes, so the road lines come from [sgbusdata](https://github.com/cheeaun/sgbusdata), the data behind [BusRouter SG](https://busrouter.sg): LTA's own route lines, patched from OneMap and Citymapper where LTA's are missing or cut off. `scripts/fetch_bus_routes.py` bakes them into `data/bus_routes.json`, with each stop's distance along its line worked out once, at bake time:
+
+- **Stops are placed in order along the line**, each searched for only beyond the one before, so a loop service's stop lands on the right lap.
+- **Some lines do not run the way their stop list does.** Measured at bake time, 27 patterns run backwards, and loop services often start partway round (service 102's line starts 12.7 km in). Taken as published, those put stops on the far side of the same road — 982 stops more than 150 m off their line. The bake tries each line reversed and, for closed loops, rotated to start at the first stop, and keeps whichever fits best: 40 lines are corrected, leaving 194 of ~27,000 stops more than 150 m off, mostly where the source line has a gap.
+
+For each bus, `route_path` in [`api/index.py`](api/index.py) works out where on its line it is and sends the road ahead — plus up to 1.5 km behind — with distances along it:
+
+- Every stretch of line leading to the stop is a candidate, for each pattern and each time it visits the stop. The GPS fix is projected onto each; fits more than 120 m away (Next Stop's figure), or that would need more than 60 km/h to make LTA's ETA, are dropped, and the closest fit wins. The speed test is Next Stop's too: without it, a 502 was once placed 41 km out on a stretch of its own route that merely passed nearby.
+- **The pin is drawn on the road** at the projected spot, not where GPS put it a few metres off. On live data the fixes sat a median 7 m from the line, at most 27 m.
+- Up to 2 km of road ahead is sent; past that the path cuts straight to the stop, which a pin reaches only if polling stops for minutes. Each bus's path is typically 10–30 points.
+- Service not in the bake, or no fit: the path is a straight line from fix to stop.
+
+**The rules** live in [`static/glide.js`](static/glide.js), all in metres along that path:
+
+| Rule | Value | Why |
+| --- | --- | --- |
+| Pace | road distance to stop ÷ time LTA says remains | Pin arrives when the countdown says it will |
+| Speed ceiling | 60 km/h | An "Arr" ETA for a bus 1 km out must not fling the pin across the map |
+| Hold short of the stop | 80 m | Never "arrive" on a guess; the last stretch waits for a real fix |
+| Never reverse | — | A fresh fix slightly behind the pin makes the pin wait, not back up |
+| Catch-up | ~2 s ease, at most 90 km/h | A fix ahead of the pin is a quick slide along the road, not a lurch |
+| Snap | fix > 600 m behind or > 1.5 km ahead | Too far off to glide: jump straight to the truth |
+
+Each new path is threaded through the pin's current spot, so a fresh fix never shoves a pin sideways onto the new line.
+
+Measured over ~8,900 samples of live data at a busy stop: all 23 tracked buses fitted their road line, pins sat a median 0 m off it (never more than 13 m), 99.9% of on-screen speeds were under 96 km/h, and no pin ever moved backwards.
+
+**What it does not claim.** This is a presentation fix, not a better forecast: the ETA is still LTA's, and the countdown on `/` is untouched. Next Stop also slows its shadow near stops and bends with a per-stretch "speed map"; that is left out here, because buses skip stops nobody is waiting at, and a pin that dwelt at every stop would lag the real bus more often than match it. A pin is a best guess for up to ~20s; the 80 m hold and the never-reverse rule exist so that guess errs behind the real bus rather than ahead of it.
+
+**Pins follow vehicles, not ranks.** The feed lists a service's buses as next, second and third. When the first passes the stop, the second becomes "next" — so a pin keyed by rank would leap back to the following bus. Each poll instead matches rows to the existing pins of that service by position, so a pin stays on one physical bus and an open popup stays open on it.
+
+Buses whose stop has no known position (an un-regenerated `bus_stops.json`) keep the old behaviour: parked on their fix.
+
+### LTA vs actual
+
+Gliding pins make the map agree with LTA; they do not make LTA's estimate any better. To see how good that estimate is, `/map` keeps score while it is open. When a bus reaches its stop, a panel under the list records what LTA promised against what happened:
+
+```
+LTA vs actual, this visit
+3 buses · on average off by 2 min · 1 of 3 within a minute
+111 · LTA said 16:04, arrived 16:07 · 3 min late (predicted 4 min ahead)
+```
+
+How a bus is judged ([`static/accuracy.js`](static/accuracy.js)):
+
+- **The prediction tested is the first one seen** for that bus — the one you would have planned your walk around. Later revisions as it closes in are not what you acted on.
+- **Arrival is its first GPS fix within 100 m of the stop.** Buses with no GPS fix are never judged, and a bus that slips past between two fixes is simply missed.
+- **Predictions made under a minute out are skipped.** A bus already pulling in is no test, and counting it would flatter the score.
+- **The summary averages the size of the miss**, not the signed error, so a late bus and an early one cannot cancel into "on time".
+- **Early is red, late is amber.** Early is the costly miss — you were told you had time.
+
+It relies on pins following vehicles rather than ranks (see above); otherwise a passing bus would hand its prediction to the one behind it.
+
+**What it is and is not.** Nothing is stored: the records live in the tab and reset on reload, so the app stays stateless. That makes it a sample of what you happened to watch, not a statistic — fine for a sense of how far to trust the countdown, not for publishing a number. Expect roughly ±30 s of slop: a fix can be ~20 s old when it arrives, and 100 m is a little before the pole, which is why results are shown in whole minutes. Measuring properly — weeks of records, by stop and time of day — needs somewhere to keep them, and is the prerequisite for ever correcting LTA's estimate rather than just displaying it.
 
 ### Picking a stop
 
@@ -218,3 +287,9 @@ For `/map`:
 5. Leave the page open for a minute. Pins should move without the map flickering or re-centring, and an open popup should survive a refresh.
 6. Tap a row and confirm the map pans to that bus and opens its pin. Rows with no live position should do nothing.
 7. Unset `HOME_LAT` and confirm `/map` explains what to set while `/` still works.
+8. Run `node scripts/test_glide.js` — the pacing rules in `static/glide.js` as plain asserts.
+9. Watch a pin for a minute: it should creep towards its stop between polls, stop ~80 m short, and never move backwards.
+10. Run `node scripts/test_accuracy.js` — the judging rules in `static/accuracy.js`.
+11. Leave `/map?stop=<a busy stop>` open for ten minutes. The "LTA vs actual" panel should appear once a tracked bus reaches the stop, and reloading should clear it.
+12. Run `python scripts/test_route_path.py` — the polyline decoder and route fitting in `api/index.py`, against made-up roads including a loop.
+13. On `/map?stop=<code>`, a tracked bus's distance should read `… by road`, and its pin should follow the road rather than cutting across.

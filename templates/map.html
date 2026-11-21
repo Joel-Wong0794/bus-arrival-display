@@ -10,6 +10,8 @@
     />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/htmx.org@2"></script>
+    <script src="{{ url_for('static', filename='glide.js') }}"></script>
+    <script src="{{ url_for('static', filename='accuracy.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='map.css') }}" />
   </head>
   <body>
@@ -106,6 +108,17 @@
       {% include "_map_list.html" %}
     </div>
 
+    {% if not home_missing or mode == "stop" %}
+    {# Filled by renderAccuracy() below, and only once a bus has actually
+       reached its stop while the page was open. Outside #bus-list so the
+       20s htmx swap cannot wipe it. Hidden until there is something to say. #}
+    <section id="accuracy" class="accuracy" hidden aria-live="polite">
+      <h2 class="accuracy-title">LTA vs actual, this visit</h2>
+      <p class="accuracy-summary"></p>
+      <ul class="accuracy-list"></ul>
+    </section>
+    {% endif %}
+
     <p class="map-legend">
       <span class="dot arriving"></span> Arriving
       <span class="dot soon"></span> {% if window_minutes %}Within {{ window_minutes }} min{% else %}Due{% endif %}
@@ -150,24 +163,136 @@
         .bindPopup({{ (selected.name ~ " (" ~ selected.code ~ ")" if selected else "Home") | tojson }});
       {% endif %}
 
-      // Keyed by vehicle so a refresh moves a marker rather than replacing it —
-      // rebuilding them would slam shut any popup that was open.
+      // Row key ("stop|service|rank") -> the marker drawn for that row. Rebuilt
+      // on every poll, because ranks shift: when a service's first bus passes
+      // the stop, its second bus becomes rank 0. Keying markers by rank alone
+      // would make the rank-0 pin leap back to the following bus. Instead each
+      // poll re-matches rows to existing markers by position (takeNearest), so
+      // a pin keeps following the same physical bus and an open popup stays
+      // open on it.
       var markers = {};
       var fitted = false;
 
+      // Picks the existing marker of this service at this stop nearest the
+      // new fix, and removes it from `spare` so no two rows claim one pin.
+      // shortcut: greedy in rank order, not a globally optimal matching — fine
+      // for the <=3 buses LTA lists per service; revisit if a service ever
+      // bunches several buses within metres of each other.
+      function takeNearest(spare, fix) {
+        if (!spare || !spare.length) return null;
+        var best = 0;
+        for (var i = 1; i < spare.length; i++) {
+          if (spare[i].getLatLng().distanceTo(fix) < spare[best].getLatLng().distanceTo(fix)) best = i;
+        }
+        // Further than a snap would cover: a different bus, not this one moved.
+        if (spare[best].getLatLng().distanceTo(fix) > Glide.SNAP_AHEAD_M) return null;
+        return spare.splice(best, 1)[0];
+      }
+
+      // Points a marker's shadow bus at the stop from a fresh fix. The tick
+      // loop below then drives it; see static/glide.js for the pacing rules.
+      //
+      // Everything is measured in road metres along the bus's path (from
+      // route_path in api/index.py): the shadow and the pin each have a
+      // "metres left to the stop", and Glide.pointAt turns that back into a
+      // spot on the map. Working in metres along the road rather than in
+      // lat/lon is what keeps the pin on the route instead of cutting corners.
+      //
+      // marker._left  metres the visible pin has left to drive
+      // marker._glide { path, from, stop, d0, t0, tA } — d0 is the fix's road
+      //               distance to the stop; t0/tA as in Glide.shadowTravelled
+      function anchor(marker, fix, row, now) {
+        var raw = row.getAttribute("data-path");
+        var arrival = parseInt(row.getAttribute("data-arrival"), 10);
+        if (!raw || !arrival) {
+          // No stop position (un-regenerated bus_stops.json) or no ETA:
+          // behave as before the glide existed — park on the fix.
+          marker.setLatLng(fix);
+          marker._glide = null;
+          return;
+        }
+        var path = JSON.parse(raw);
+        var end = path[path.length - 1];
+        var stop = L.latLng(end[0], end[1]);
+        var d0 = end[2];
+        var old = marker._glide;
+
+        // htmx polls every REFRESH_SECONDS but LTA may not have published a
+        // new fix since. Re-anchoring on the same fix would drag the shadow
+        // back to where it started, so keep the old start and only take the
+        // revised ETA.
+        if (old && old.from.equals(fix) && old.stop.equals(stop)) {
+          old.tA = arrival;
+          return;
+        }
+
+        // Pin is ahead of the fix (gap < 0) by a little: hold and let the
+        // shadow catch up. Behind it a little: the tick loop eases forward,
+        // drawing the pin on the path's one point before the fix. Either way,
+        // too far off and we jump straight to the truth.
+        var gap = old ? marker._left - d0 : 0;
+        if (!old || Glide.onNewFix(gap) === "snap") {
+          marker._left = d0;
+          // Metre 0 of the path is the fix projected onto the road line (or
+          // the fix itself on a straight-line fallback), so the pin lands on
+          // the road rather than a few metres off it where GPS put it.
+          marker.setLatLng(Glide.pointAt(path, 0));
+        } else {
+          // Thread the new path through where the pin is drawn right now, so
+          // it carries on from exactly there instead of sliding sideways onto
+          // the new line. (Each fix starts a fresh path at the fix; where stops
+          // are far apart, the old and new lines can differ by 200 m+.)
+          var pinM = d0 - marker._left; // < 0: pin behind the fix; > 0: ahead
+          var here = marker.getLatLng();
+          path = path.filter(function (p) {
+            // Behind: drop road the pin has already passed. Ahead: drop stops
+            // between the fix and the pin, so the shadow drives fix -> pin.
+            return pinM < 0 ? p[2] > pinM : p[2] <= 0 || p[2] > pinM;
+          });
+          var at = 0;
+          while (at < path.length && path[at][2] < pinM) at++;
+          // Re-measure the pin's own leg on the map. pinM came from the *old*
+          // path's road metres, which need not match the straight line the
+          // new leg is drawn as — in testing, a far-out bus then crossed
+          // 20 m per tick (~290 km/h on screen). Measured physically, a metre
+          // along the leg is a metre on the map.
+          if (pinM < 0) {
+            var ahead = path[at]; // first point in front of the pin
+            pinM = ahead[2] - here.distanceTo(L.latLng(ahead[0], ahead[1]));
+          } else {
+            // Ahead of the fix: the leg is fix -> pin, capped so the pin
+            // stays before the next point.
+            pinM = Math.min(here.distanceTo(fix), at < path.length ? path[at][2] : d0);
+          }
+          path.splice(at, 0, [here.lat, here.lng, pinM]);
+          marker._left = d0 - pinM;
+        }
+
+        marker._glide = { path: path, from: fix, stop: stop, d0: d0, t0: now, tA: arrival };
+      }
+
       function syncMarkers() {
         var rows = document.querySelectorAll("#bus-list .bus-row[data-lat]");
-        var seen = {};
         var points = FOCUS ? [FOCUS] : [];
+        var now = Date.now();
+
+        // Last poll's markers, grouped by "stop|service", waiting to be
+        // claimed by this poll's rows. Whatever is left over gets removed.
+        var spare = {};
+        for (var oldKey in markers) {
+          var group = markers[oldKey]._group;
+          (spare[group] = spare[group] || []).push(markers[oldKey]);
+        }
+        markers = {};
 
         for (var i = 0; i < rows.length; i++) {
           var row = rows[i];
           var key = row.getAttribute("data-key");
-          var at = [
+          var groupKey = key.slice(0, key.lastIndexOf("|")); // drop the rank
+          var at = L.latLng(
             parseFloat(row.getAttribute("data-lat")),
-            parseFloat(row.getAttribute("data-lon")),
-          ];
-          seen[key] = true;
+            parseFloat(row.getAttribute("data-lon"))
+          );
           points.push(at);
 
           var tier = row.getAttribute("data-tier");
@@ -185,22 +310,35 @@
             "<br>at " + row.getAttribute("data-stop") +
             "<br>" + parts.join(" &middot; ");
 
-          if (markers[key]) {
-            markers[key].setLatLng(at);
-            markers[key].setIcon(busIcon(no, tier));
-            markers[key].getPopup().setContent(detail);
+          var marker = takeNearest(spare[groupKey], at);
+          if (marker) {
+            marker.setIcon(busIcon(no, tier));
+            marker.getPopup().setContent(detail);
           } else {
-            markers[key] = L.marker(at, { icon: busIcon(no, tier) })
+            marker = L.marker(at, { icon: busIcon(no, tier) })
               .addTo(map)
               .bindPopup(detail);
+            // A new pin is a newly seen bus: remember what LTA promises now.
+            // Only here, not on every poll — later, revised predictions are
+            // not what you planned your walk around.
+            var promised = parseInt(row.getAttribute("data-arrival"), 10);
+            marker._watch = promised ? Accuracy.watch(promised, now) : null;
+          }
+          marker._group = groupKey;
+          anchor(marker, at, row, now);
+          markers[key] = marker;
+
+          // LTA vs actual: did this fix put the bus at its stop? Needs the
+          // stop's position, which anchor() has just set on _glide.
+          if (marker._glide) {
+            var record = Accuracy.check(marker._watch, at.distanceTo(marker._glide.stop), now);
+            if (record) logArrival(record, no, row.getAttribute("data-stop"));
           }
         }
 
-        for (var key in markers) {
-          if (!seen[key]) {
-            map.removeLayer(markers[key]);
-            delete markers[key];
-          }
+        // Unclaimed: the bus passed the stop, left the window, or lost GPS.
+        for (var g in spare) {
+          for (var j = 0; j < spare[g].length; j++) map.removeLayer(spare[g][j]);
         }
 
         // Frame everything once. Re-fitting on each poll would yank the map back
@@ -208,6 +346,48 @@
         if (!fitted && points.length > (FOCUS ? 1 : 0)) {
           map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 17 });
           fitted = true;
+        }
+      }
+
+      // Every bus judged so far this visit, newest first. In memory only:
+      // closing or reloading the tab starts over (see static/accuracy.js).
+      var arrivals = [];
+
+      function logArrival(record, no, stop) {
+        record.no = no;
+        record.stop = stop;
+        arrivals.unshift(record);
+        renderAccuracy();
+      }
+
+      function clock(ms) {
+        return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      }
+
+      // textContent throughout: stop names come from LTA's data, not ours.
+      function renderAccuracy() {
+        var box = document.getElementById("accuracy");
+        var sum = Accuracy.summarize(arrivals);
+        if (!sum) return;
+        box.hidden = false;
+        box.querySelector(".accuracy-summary").textContent =
+          sum.count + (sum.count === 1 ? " bus" : " buses") +
+          " · on average " + Accuracy.describeMiss(sum.meanMissS) +
+          " · " + sum.withinMinute + " of " + sum.count + " within a minute";
+        var list = box.querySelector(".accuracy-list");
+        list.textContent = "";
+        for (var i = 0; i < arrivals.length; i++) {
+          var r = arrivals[i];
+          var item = document.createElement("li");
+          var verdict = Accuracy.describe(r.errorS);
+          // Same colour language as the tiers: late = amber, early = red
+          // (early is the costly miss: you were told you had time), else plain.
+          item.className = verdict === "on time" ? "" : r.errorS > 0 ? "late" : "early";
+          item.textContent =
+            r.no + " · LTA said " + clock(r.predicted) + ", arrived " + clock(r.arrived) +
+            " · " + verdict + " (predicted " + Math.round(r.leadS / 60) + " min ahead)";
+          item.title = r.stop;
+          list.appendChild(item);
         }
       }
 
@@ -249,6 +429,32 @@
 
       document.body.addEventListener("htmx:afterSwap", syncMarkers);
       syncMarkers();
+
+      // The glide. Four times a second, each pin eases towards where its
+      // shadow bus should be by now. 250ms looks smooth at street zoom while
+      // staying cheap on an old phone; requestAnimationFrame would be smoother
+      // but redraws ~60x a second for movement of a metre or two.
+      var lastTick = Date.now();
+      setInterval(function () {
+        var now = Date.now();
+        var dt = now - lastTick;
+        lastTick = now;
+        if (document.hidden) return; // nobody watching; a wake-up poll re-anchors
+        for (var key in markers) {
+          var marker = markers[key];
+          var g = marker._glide;
+          if (!g) continue;
+          var shadowLeft = g.d0 - Glide.shadowTravelled(g.d0, g.t0, g.tA, now);
+          // Never reverse: if the shadow is behind the pin (a fresh fix landed
+          // a little short), the pin waits for it rather than backing up.
+          // easeStep returns 0 when the shadow is behind, and caps catch-up
+          // at 90 km/h when a fresh fix lands well ahead of the pin.
+          marker._left -= Glide.easeStep(marker._left - shadowLeft, dt);
+          // anchor() threads each new path through the pin, so this is always
+          // a step along the road from where the pin already is.
+          marker.setLatLng(Glide.pointAt(g.path, g.d0 - marker._left));
+        }
+      }, 250);
 
       // Waking the phone resumes a throttled poll only on its next tick.
       document.addEventListener("visibilitychange", function () {

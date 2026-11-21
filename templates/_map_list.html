@@ -22,6 +22,17 @@
     data-lon="{{ bus.lon }}"
     data-distance="{{ bus.distance }}"
     tabindex="0"
+    {# Glide inputs: where the pin is heading and when LTA says it gets
+       there. Absent when the stop has no known position — the pin then sits
+       on its GPS fix and nothing moves between polls. #}
+    data-arrival="{{ bus.arrival_ms }}"
+    {% if bus.stop_lat is not none %}
+    data-stop-lat="{{ bus.stop_lat }}"
+    data-stop-lon="{{ bus.stop_lon }}"
+    {% endif %}
+    {# The road to the stop, [[lat, lon, metres], ...] — see route_path in
+       api/index.py. Single-quoted: tojson escapes ' but not ". #}
+    {% if bus.path %}data-path='{{ bus.path | tojson }}'{% endif %}
     {% endif %}
     data-load="{{ bus.load or '' }}"
     data-destination="{{ bus.destination or '' }}"
