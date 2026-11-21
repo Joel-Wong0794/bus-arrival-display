@@ -144,6 +144,28 @@ LTA gives two things per bus: where its GPS last put it, and when it should reac
 
 Buses whose stop has no known position (an un-regenerated `bus_stops.json`) keep the old behaviour: parked on their fix.
 
+### LTA vs actual
+
+Gliding pins make the map agree with LTA; they do not make LTA's estimate any better. To see how good that estimate is, `/map` keeps score while it is open. When a bus reaches its stop, a panel under the list records what LTA promised against what happened:
+
+```
+LTA vs actual, this visit
+3 buses · on average off by 2 min · 1 of 3 within a minute
+111 · LTA said 16:04, arrived 16:07 · 3 min late (predicted 4 min ahead)
+```
+
+How a bus is judged ([`static/accuracy.js`](static/accuracy.js)):
+
+- **The prediction tested is the first one seen** for that bus — the one you would have planned your walk around. Later revisions as it closes in are not what you acted on.
+- **Arrival is its first GPS fix within 100 m of the stop.** Buses with no GPS fix are never judged, and a bus that slips past between two fixes is simply missed.
+- **Predictions made under a minute out are skipped.** A bus already pulling in is no test, and counting it would flatter the score.
+- **The summary averages the size of the miss**, not the signed error, so a late bus and an early one cannot cancel into "on time".
+- **Early is red, late is amber.** Early is the costly miss — you were told you had time.
+
+It relies on pins following vehicles rather than ranks (see above); otherwise a passing bus would hand its prediction to the one behind it.
+
+**What it is and is not.** Nothing is stored: the records live in the tab and reset on reload, so the app stays stateless. That makes it a sample of what you happened to watch, not a statistic — fine for a sense of how far to trust the countdown, not for publishing a number. Expect roughly ±30 s of slop: a fix can be ~20 s old when it arrives, and 100 m is a little before the pole, which is why results are shown in whole minutes. Measuring properly — weeks of records, by stop and time of day — needs somewhere to keep them, and is the prerequisite for ever correcting LTA's estimate rather than just displaying it.
+
 ### Picking a stop
 
 The picker at the top switches the page to any stop: `/map?stop=28519`.
@@ -241,3 +263,5 @@ For `/map`:
 7. Unset `HOME_LAT` and confirm `/map` explains what to set while `/` still works.
 8. Run `node scripts/test_glide.js` — the pacing rules in `static/glide.js` as plain asserts.
 9. Watch a pin for a minute: it should creep towards its stop between polls, stop ~80 m short, and never move backwards.
+10. Run `node scripts/test_accuracy.js` — the judging rules in `static/accuracy.js`.
+11. Leave `/map?stop=<a busy stop>` open for ten minutes. The "LTA vs actual" panel should appear once a tracked bus reaches the stop, and reloading should clear it.
