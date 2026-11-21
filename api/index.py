@@ -698,6 +698,14 @@ def collect_map_buses(
                     row["distance"] = format_distance(
                         haversine_m(*origin, bus["lat"], bus["lon"])
                     )
+                # In the stop view distances are measured from the very stop
+                # the bus is heading to, so when it fits its route, quote the
+                # drive rather than the straight line — on a looping road the
+                # two can differ by a kilometre. Home view keeps straight-line:
+                # home is not on any bus route.
+                path = row["path"]
+                if origin is not None and origin == target and path and len(path) > 2:
+                    row["distance"] = format_distance(path[-1][2]) + " by road"
                 rows.append(row)
     rows.sort(key=lambda row: row["minutes"])
     return rows
