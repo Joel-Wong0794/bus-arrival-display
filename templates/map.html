@@ -233,7 +233,10 @@
         var gap = old ? marker._left - d0 : 0;
         if (!old || Glide.onNewFix(gap) === "snap") {
           marker._left = d0;
-          marker.setLatLng(fix);
+          // Metre 0 of the path is the fix projected onto the road line (or
+          // the fix itself on a straight-line fallback), so the pin lands on
+          // the road rather than a few metres off it where GPS put it.
+          marker.setLatLng(Glide.pointAt(path, 0));
         } else {
           // Thread the new path through where the pin is drawn right now, so
           // it carries on from exactly there instead of sliding sideways onto

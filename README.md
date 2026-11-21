@@ -90,13 +90,13 @@ The arrival feed names a destination only by bus stop code (`22009`), and the `B
 python scripts/fetch_bus_stops.py
 ```
 
-The map's route-following glide also needs `data/bus_routes.json` — every service's stops in order — baked the same way, **after** the stops file, since it takes stop positions from it:
+The map's route-following glide also needs `data/bus_routes.json` — every service's road line — baked **after** the stops file, since it places each stop on its line using the positions there:
 
 ```
 python scripts/fetch_bus_routes.py
 ```
 
-Re-run it when LTA amends a route. Without the file, pins glide in a straight line instead. The two bakes together cost about 65 DataMall calls, once; the app makes no route calls at runtime.
+It downloads from [sgbusdata](https://github.com/cheeaun/sgbusdata) on GitHub (~550 KB, no DataMall key or calls) and takes a few seconds. Re-run it when routes change; sgbusdata refreshes from LTA on its own schedule, and the file records which update it was baked from. Without the file, pins glide in a straight line instead.
 
 The file holds a name **and position** per stop — `{"name": ..., "lat": ..., "lon": ...}` — since the `BusStops` response carries coordinates in the same rows the names come from. Positions are what let the picker offer nearby stops and measure distance from a selected one.
 
@@ -137,12 +137,19 @@ A pin that only moved on each GPS fix sat still for ~20s and then teleported. Pi
 
 LTA gives two things per bus: where its GPS last put it, and when it should reach the stop. The second sets a pace. An invisible *shadow bus* drives along the route from the last fix towards the stop at that pace, and the visible pin follows it.
 
-**The route.** `scripts/fetch_bus_routes.py` bakes every service's stops in order into `data/bus_routes.json`. For each bus, `route_path` in [`api/index.py`](api/index.py) works out which stretch of route it is on and sends the stops ahead — plus up to 1.5 km of road behind — with distances along the road:
+**The route.** DataMall has stop sequences but no route shapes, so the road lines come from [sgbusdata](https://github.com/cheeaun/sgbusdata), the data behind [BusRouter SG](https://busrouter.sg): LTA's own route lines, patched from OneMap and Citymapper where LTA's are missing or cut off. `scripts/fetch_bus_routes.py` bakes them into `data/bus_routes.json`, with each stop's distance along its line worked out once, at bake time:
 
-- Every route segment leading to the stop is a candidate. The GPS fix is projected onto each; fits more than 300 m away, or that would need more than 60 km/h to make LTA's ETA, are dropped, and the closest fit wins. The speed test is Next Stop's: without it, a 502 was once placed 41 km out on a stretch of its own route that merely passed nearby.
-- The path starts at the real GPS fix, not the projected point. The route is straight lines from stop to stop, coarser than the road, so the fix is the better position.
-- Distances along the path are measured on the map, then stretched to match LTA's road total. LTA's per-stop figures are rounded to 0.1 km; used directly, two stops 120 m apart could sit 1 m apart "along the road", and the pin leapt across them in one frame.
-- No route file, or no fit: the path is a straight line from fix to stop.
+- **Stops are placed in order along the line**, each searched for only beyond the one before, so a loop service's stop lands on the right lap.
+- **Some lines do not run the way their stop list does.** Measured at bake time, 27 patterns run backwards, and loop services often start partway round (service 102's line starts 12.7 km in). Taken as published, those put stops on the far side of the same road — 982 stops more than 150 m off their line. The bake tries each line reversed and, for closed loops, rotated to start at the first stop, and keeps whichever fits best: 40 lines are corrected, leaving 194 of ~27,000 stops more than 150 m off, mostly where the source line has a gap.
+
+For each bus, `route_path` in [`api/index.py`](api/index.py) works out where on its line it is and sends the road ahead — plus up to 1.5 km behind — with distances along it:
+
+- Every stretch of line leading to the stop is a candidate, for each pattern and each time it visits the stop. The GPS fix is projected onto each; fits more than 120 m away (Next Stop's figure), or that would need more than 60 km/h to make LTA's ETA, are dropped, and the closest fit wins. The speed test is Next Stop's too: without it, a 502 was once placed 41 km out on a stretch of its own route that merely passed nearby.
+- **The pin is drawn on the road** at the projected spot, not where GPS put it a few metres off. On live data the fixes sat a median 7 m from the line, at most 27 m.
+- Up to 2 km of road ahead is sent; past that the path cuts straight to the stop, which a pin reaches only if polling stops for minutes. Each bus's path is typically 10–30 points.
+- Service not in the bake, or no fit: the path is a straight line from fix to stop.
+
+**Credit and licence.** Road lines: [sgbusdata](https://github.com/cheeaun/sgbusdata) by Lim Chee Aun, from LTA data (Singapore Open Data Licence) with OneMap and Citymapper patches. Neither sgbusdata nor BusRouter SG carries a licence file, so redistribution terms for the derived lines are not stated — check with the author before publishing `data/bus_routes.json` somewhere new.
 
 **The rules** live in [`static/glide.js`](static/glide.js), all in metres along that path:
 
@@ -157,9 +164,9 @@ LTA gives two things per bus: where its GPS last put it, and when it should reac
 
 Each new path is threaded through the pin's current spot, so a fresh fix never shoves a pin sideways onto the new line.
 
-Measured over ~8,500 samples of live data at a busy stop: pins sat a median 1 m off their path (95% within 10 m), 99.9% of on-screen speeds were under 97 km/h, and no pin ever moved backwards.
+Measured over ~8,900 samples of live data at a busy stop: all 23 tracked buses fitted their road line, pins sat a median 0 m off it (never more than 13 m), 99.9% of on-screen speeds were under 96 km/h, and no pin ever moved backwards.
 
-**What it does not claim.** This is a presentation fix, not a better forecast: the ETA is still LTA's, and the countdown on `/` is untouched. Between two stops the pin follows a straight line, so it still trims bends. Next Stop also slows its shadow near stops and bends with a per-stretch "speed map"; that is left out here, because buses skip stops nobody is waiting at, and a pin that dwelt at every stop would lag the real bus more often than match it. A pin is a best guess for up to ~20s; the 80 m hold and the never-reverse rule exist so that guess errs behind the real bus rather than ahead of it.
+**What it does not claim.** This is a presentation fix, not a better forecast: the ETA is still LTA's, and the countdown on `/` is untouched. Next Stop also slows its shadow near stops and bends with a per-stretch "speed map"; that is left out here, because buses skip stops nobody is waiting at, and a pin that dwelt at every stop would lag the real bus more often than match it. A pin is a best guess for up to ~20s; the 80 m hold and the never-reverse rule exist so that guess errs behind the real bus rather than ahead of it.
 
 **Pins follow vehicles, not ranks.** The feed lists a service's buses as next, second and third. When the first passes the stop, the second becomes "next" — so a pin keyed by rank would leap back to the following bus. Each poll instead matches rows to the existing pins of that service by position, so a pin stays on one physical bus and an open popup stays open on it.
 
@@ -286,5 +293,5 @@ For `/map`:
 9. Watch a pin for a minute: it should creep towards its stop between polls, stop ~80 m short, and never move backwards.
 10. Run `node scripts/test_accuracy.js` — the judging rules in `static/accuracy.js`.
 11. Leave `/map?stop=<a busy stop>` open for ten minutes. The "LTA vs actual" panel should appear once a tracked bus reaches the stop, and reloading should clear it.
-12. Run `python scripts/test_route_path.py` — route fitting in `api/index.py`, against a made-up route.
-13. On `/map?stop=<code>`, a tracked bus's distance should read `… by road`, and its pin should follow the road from stop to stop rather than cutting across.
+12. Run `python scripts/test_route_path.py` — the polyline decoder and route fitting in `api/index.py`, against made-up roads including a loop.
+13. On `/map?stop=<code>`, a tracked bus's distance should read `… by road`, and its pin should follow the road rather than cutting across.
