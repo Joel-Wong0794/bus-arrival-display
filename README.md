@@ -119,9 +119,30 @@ Three things worth knowing about the data:
 
 - **Not every bus can be plotted.** DataMall only sends real coordinates when `Monitored` is `1`. On a schedule-derived estimate it sends the string `"0.0"`, which would place the bus in the Atlantic, so those buses are listed but never pinned — a bus two minutes away still matters when it has no GPS fix. The count of them appears under the list.
 - **Distance is straight-line, not road distance.** A bus 400 m away as the crow flies can be 2 km away by road.
-- **Positions are up to ~20s stale.** That is DataMall's publish interval. Markers jump rather than glide, because interpolating would imply a precision the feed does not have.
+- **Positions are up to ~20s stale.** That is DataMall's publish interval. Between fixes the pins glide towards the stop, paced by LTA's arrival time — see [Gliding pins](#gliding-pins) for what that does and does not claim.
 
 Markers are keyed per vehicle, so a refresh moves a pin rather than rebuilding it — otherwise an open popup would slam shut every poll. The view is framed once on load and never re-fitted, so a refresh cannot yank the map while you are panning it.
+
+### Gliding pins
+
+A pin that only moved on each GPS fix sat still for ~20s and then teleported. Pins now glide in between, using the "shadow bus" idea from [Next Stop's write-up](https://nextstopsg.app/interpolation.html), cut down to what this app's data supports.
+
+LTA gives two things per bus: where its GPS last put it, and when it should reach the stop. The second sets a pace. An invisible *shadow bus* drives from the last fix towards the stop at that pace, and the visible pin eases after it. The rules live in [`static/glide.js`](static/glide.js):
+
+| Rule | Value | Why |
+| --- | --- | --- |
+| Pace | distance to stop ÷ time LTA says remains | Pin arrives when the countdown says it will |
+| Speed ceiling | 60 km/h | An "Arr" ETA for a bus 1 km out must not fling the pin across the map |
+| Hold short of the stop | 80 m | Never "arrive" on a guess; the last stretch waits for a real fix |
+| Never reverse | — | A fresh fix slightly behind the pin makes the pin wait, not back up |
+| Snap | fix > 600 m behind or > 1.5 km ahead | Too far off to glide: jump straight to the truth |
+| Catch-up | ~2 s ease | A corrected fix is a quick slide, not a jerk |
+
+**What it does not claim.** This is a presentation fix, not a better forecast: the ETA is still LTA's, and the countdown on `/` is untouched. The shadow drives a **straight line** from fix to stop, so on a winding road the pin cuts corners — following the route's stop sequence is the planned next step. A pin is a best guess for up to ~20s; the 80 m hold and the never-reverse rule exist so that guess errs behind the real bus rather than ahead of it.
+
+**Pins follow vehicles, not ranks.** The feed lists a service's buses as next, second and third. When the first passes the stop, the second becomes "next" — so a pin keyed by rank would leap back to the following bus. Each poll instead matches rows to the existing pins of that service by position, so a pin stays on one physical bus and an open popup stays open on it.
+
+Buses whose stop has no known position (an un-regenerated `bus_stops.json`) keep the old behaviour: parked on their fix.
 
 ### Picking a stop
 
@@ -218,3 +239,5 @@ For `/map`:
 5. Leave the page open for a minute. Pins should move without the map flickering or re-centring, and an open popup should survive a refresh.
 6. Tap a row and confirm the map pans to that bus and opens its pin. Rows with no live position should do nothing.
 7. Unset `HOME_LAT` and confirm `/map` explains what to set while `/` still works.
+8. Run `node scripts/test_glide.js` — the pacing rules in `static/glide.js` as plain asserts.
+9. Watch a pin for a minute: it should creep towards its stop between polls, stop ~80 m short, and never move backwards.

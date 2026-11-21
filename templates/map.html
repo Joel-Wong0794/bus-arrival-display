@@ -10,6 +10,7 @@
     />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/htmx.org@2"></script>
+    <script src="{{ url_for('static', filename='glide.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='map.css') }}" />
   </head>
   <body>
@@ -150,24 +151,87 @@
         .bindPopup({{ (selected.name ~ " (" ~ selected.code ~ ")" if selected else "Home") | tojson }});
       {% endif %}
 
-      // Keyed by vehicle so a refresh moves a marker rather than replacing it —
-      // rebuilding them would slam shut any popup that was open.
+      // Row key ("stop|service|rank") -> the marker drawn for that row. Rebuilt
+      // on every poll, because ranks shift: when a service's first bus passes
+      // the stop, its second bus becomes rank 0. Keying markers by rank alone
+      // would make the rank-0 pin leap back to the following bus. Instead each
+      // poll re-matches rows to existing markers by position (takeNearest), so
+      // a pin keeps following the same physical bus and an open popup stays
+      // open on it.
       var markers = {};
       var fitted = false;
 
+      // Picks the existing marker of this service at this stop nearest the
+      // new fix, and removes it from `spare` so no two rows claim one pin.
+      // shortcut: greedy in rank order, not a globally optimal matching — fine
+      // for the <=3 buses LTA lists per service; revisit if a service ever
+      // bunches several buses within metres of each other.
+      function takeNearest(spare, fix) {
+        if (!spare || !spare.length) return null;
+        var best = 0;
+        for (var i = 1; i < spare.length; i++) {
+          if (spare[i].getLatLng().distanceTo(fix) < spare[best].getLatLng().distanceTo(fix)) best = i;
+        }
+        // Further than a snap would cover: a different bus, not this one moved.
+        if (spare[best].getLatLng().distanceTo(fix) > Glide.SNAP_AHEAD_M) return null;
+        return spare.splice(best, 1)[0];
+      }
+
+      // Points a marker's shadow bus at the stop from a fresh fix. The tick
+      // loop below then drives it; see static/glide.js for the pacing rules.
+      function anchor(marker, fix, row, now) {
+        var stopLat = row.getAttribute("data-stop-lat");
+        var arrival = parseInt(row.getAttribute("data-arrival"), 10);
+        if (!stopLat || !arrival) {
+          // No stop position (un-regenerated bus_stops.json) or no ETA:
+          // behave as before the glide existed — park on the fix.
+          marker.setLatLng(fix);
+          marker._glide = null;
+          return;
+        }
+        var stop = L.latLng(parseFloat(stopLat), parseFloat(row.getAttribute("data-stop-lon")));
+        var old = marker._glide;
+
+        // htmx polls every REFRESH_SECONDS but LTA may not have published a
+        // new fix since. Re-anchoring on the same fix would drag the shadow
+        // back to where it started, so keep the old start and only take the
+        // revised ETA.
+        if (old && old.from.equals(fix) && old.stop.equals(stop)) {
+          old.tA = arrival;
+          return;
+        }
+
+        // Pin is ahead of the fix (gap < 0) by a little: hold and let the
+        // shadow catch up. Behind it a little: the tick loop eases forward.
+        // Either way, too far off and we jump straight to the truth.
+        var gap = marker.getLatLng().distanceTo(stop) - fix.distanceTo(stop);
+        if (!old || Glide.onNewFix(gap) === "snap") marker.setLatLng(fix);
+
+        marker._glide = { from: fix, stop: stop, d0: fix.distanceTo(stop), t0: now, tA: arrival };
+      }
+
       function syncMarkers() {
         var rows = document.querySelectorAll("#bus-list .bus-row[data-lat]");
-        var seen = {};
         var points = FOCUS ? [FOCUS] : [];
+        var now = Date.now();
+
+        // Last poll's markers, grouped by "stop|service", waiting to be
+        // claimed by this poll's rows. Whatever is left over gets removed.
+        var spare = {};
+        for (var oldKey in markers) {
+          var group = markers[oldKey]._group;
+          (spare[group] = spare[group] || []).push(markers[oldKey]);
+        }
+        markers = {};
 
         for (var i = 0; i < rows.length; i++) {
           var row = rows[i];
           var key = row.getAttribute("data-key");
-          var at = [
+          var groupKey = key.slice(0, key.lastIndexOf("|")); // drop the rank
+          var at = L.latLng(
             parseFloat(row.getAttribute("data-lat")),
-            parseFloat(row.getAttribute("data-lon")),
-          ];
-          seen[key] = true;
+            parseFloat(row.getAttribute("data-lon"))
+          );
           points.push(at);
 
           var tier = row.getAttribute("data-tier");
@@ -185,22 +249,23 @@
             "<br>at " + row.getAttribute("data-stop") +
             "<br>" + parts.join(" &middot; ");
 
-          if (markers[key]) {
-            markers[key].setLatLng(at);
-            markers[key].setIcon(busIcon(no, tier));
-            markers[key].getPopup().setContent(detail);
+          var marker = takeNearest(spare[groupKey], at);
+          if (marker) {
+            marker.setIcon(busIcon(no, tier));
+            marker.getPopup().setContent(detail);
           } else {
-            markers[key] = L.marker(at, { icon: busIcon(no, tier) })
+            marker = L.marker(at, { icon: busIcon(no, tier) })
               .addTo(map)
               .bindPopup(detail);
           }
+          marker._group = groupKey;
+          anchor(marker, at, row, now);
+          markers[key] = marker;
         }
 
-        for (var key in markers) {
-          if (!seen[key]) {
-            map.removeLayer(markers[key]);
-            delete markers[key];
-          }
+        // Unclaimed: the bus passed the stop, left the window, or lost GPS.
+        for (var g in spare) {
+          for (var j = 0; j < spare[g].length; j++) map.removeLayer(spare[g][j]);
         }
 
         // Frame everything once. Re-fitting on each poll would yank the map back
@@ -249,6 +314,37 @@
 
       document.body.addEventListener("htmx:afterSwap", syncMarkers);
       syncMarkers();
+
+      // The glide. Four times a second, each pin eases towards where its
+      // shadow bus should be by now. 250ms looks smooth at street zoom while
+      // staying cheap on an old phone; requestAnimationFrame would be smoother
+      // but redraws ~60x a second for movement of a metre or two.
+      var lastTick = Date.now();
+      setInterval(function () {
+        var now = Date.now();
+        var k = Glide.easeFactor(now - lastTick);
+        lastTick = now;
+        if (document.hidden) return; // nobody watching; a wake-up poll re-anchors
+        for (var key in markers) {
+          var marker = markers[key];
+          var g = marker._glide;
+          if (!g) continue;
+          var f = g.d0 ? Glide.shadowTravelled(g.d0, g.t0, g.tA, now) / g.d0 : 0;
+          // Straight-line lerp in lat/lon: exact enough over a few km.
+          var shadow = L.latLng(
+            g.from.lat + (g.stop.lat - g.from.lat) * f,
+            g.from.lng + (g.stop.lng - g.from.lng) * f
+          );
+          var shown = marker.getLatLng();
+          // Never reverse: if the shadow is behind the pin (a fresh fix landed
+          // a little short), the pin waits for it rather than backing up.
+          if (shadow.distanceTo(g.stop) >= shown.distanceTo(g.stop)) continue;
+          marker.setLatLng(L.latLng(
+            shown.lat + (shadow.lat - shown.lat) * k,
+            shown.lng + (shadow.lng - shown.lng) * k
+          ));
+        }
+      }, 250);
 
       // Waking the phone resumes a throttled poll only on its next tick.
       document.addEventListener("visibilitychange", function () {

@@ -518,6 +518,10 @@ def collect_map_buses(
     """
     rows = []
     for stop in stops_data:
+        # Where the bus is heading. The map glides each pin from its last GPS
+        # fix towards this point (see static/glide.js); None leaves the pin
+        # parked on its fix, as before. One lookup per stop, not per bus.
+        target = stop_position(stop["code"])
         for service_no, buses in stop["services"]:
             for rank, bus in enumerate(buses):
                 row = {
@@ -534,6 +538,12 @@ def collect_map_buses(
                     "distance": None,
                     "destination": bus["destination"],
                     "type_label": bus["type_label"],
+                    # Unbuffered LTA estimate: the glide paces the pin to reach
+                    # the stop when LTA says it will, not when the buffered
+                    # tile says. The buffer is a display margin, not a forecast.
+                    "arrival_ms": bus["arrival_ms"],
+                    "stop_lat": target[0] if target else None,
+                    "stop_lon": target[1] if target else None,
                 }
                 if bus["lat"] is not None and origin is not None:
                     row["distance"] = format_distance(
