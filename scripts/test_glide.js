@@ -29,6 +29,23 @@ assert.equal(Glide.onNewFix(-100), "ease");
 assert.equal(Glide.onNewFix(-700), "snap"); // e.g. rank shift to the next bus
 assert.equal(Glide.onNewFix(2000), "snap"); // e.g. phone slept through polls
 
+// pointAt walks a [lat, lon, metres] path: one point behind the fix, the fix
+// at 0, then two stops. Halfway along each leg lands halfway between points.
+const path = [[0, 0, -100], [1, 0, 0], [1, 2, 200], [3, 2, 300]];
+assert.deepEqual(Glide.pointAt(path, -50), [0.5, 0]); // pin lagging the fix
+assert.deepEqual(Glide.pointAt(path, 100), [1, 1]);
+assert.deepEqual(Glide.pointAt(path, 250), [2, 2]);
+assert.deepEqual(Glide.pointAt(path, 999), [3, 2]); // clamped: never past the stop
+assert.deepEqual(Glide.pointAt(path, -999), [0, 0]); // or before the path
+// Two points at the same distance (LTA rounds to 0.1 km) must not divide by 0.
+assert.deepEqual(Glide.pointAt([[0, 0, 0], [5, 5, 0], [6, 6, 10]], 0), [0, 0]);
+
+// Catch-up: a small gap eases, a big one is capped at 90 km/h, and a shadow
+// behind the pin (negative gap) never moves it.
+assert.equal(Glide.easeStep(8, 250), 1); // 8 m * 0.125
+assert.equal(Glide.easeStep(300, 250), Glide.CATCHUP_MAX_MPS * 0.25); // 6.25 m, not 37.5
+assert.equal(Glide.easeStep(-40, 250), 0);
+
 // Easing never overshoots and never goes backwards.
 assert.equal(Glide.easeFactor(250), 0.125);
 assert.equal(Glide.easeFactor(10_000), 1);

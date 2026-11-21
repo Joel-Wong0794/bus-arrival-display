@@ -358,6 +358,16 @@ SNAP_RADIUS_M = 300
 # good fits — e.g. a loop service passing the same road both ways — and the one
 # nearer the stop wins.
 SNAP_TIE_M = 30
+# Next Stop's plausibility test: a fit that would need the bus to beat 60 km/h
+# to reach the stop by LTA's ETA (with a minute's slack) is the wrong stretch of
+# route — in testing, a 502 got placed 41 km out on a stretch that merely
+# passes nearby. Mirrors MAX_SPEED_MPS in static/glide.js.
+MAX_SPEED_MPS = 60 / 3.6
+ETA_SLACK_S = 60
+# Road kept behind the fix, so a pin that has fallen behind a fresh fix can
+# glide forward along the road instead of lurching. Matches SNAP_AHEAD_M in
+# static/glide.js: any further behind than that and the pin jumps anyway.
+PATH_BEHIND_M = 1500
 
 
 def local_xy(lat: float, lon: float, lat0: float, lon0: float) -> tuple[float, float]:
@@ -369,27 +379,35 @@ def local_xy(lat: float, lon: float, lat0: float, lon0: float) -> tuple[float, f
 
 
 def route_path(
-    service_no: str, stop_code: str, fix: tuple[float, float], target: tuple[float, float]
+    service_no: str,
+    stop_code: str,
+    fix: tuple[float, float],
+    target: tuple[float, float],
+    eta_s: float,
 ) -> list[list[float]]:
     """The way this bus will drive to its stop, as [[lat, lon, metres], ...].
 
     Metres are road distance relative to the GPS fix: 0 at the fix, rising to
-    the stop's distance at the last point. One point before the fix (negative
-    metres) is included so the browser can ease a pin that is lagging behind.
+    the stop's distance at the last point. Stops up to PATH_BEHIND_M before the
+    fix come first (negative metres), so the browser can glide a pin that is
+    lagging behind along the road rather than cutting across.
 
     How the bus is placed on its route (cut-down Next Stop "snapping"):
     every route segment leading to this stop, in either direction and for
     every time the route visits it, is a candidate. The fix is projected onto
-    each; candidates further than SNAP_RADIUS_M are dropped; the closest fit
-    wins, ties going to the one nearer the stop. The projection decides *which
-    stop is next* and how far along the road the bus is — but the path starts
-    at the real fix, not the projected point, because our stop-to-stop chords
-    are coarser than the road and the GPS fix is the better position.
+    each; candidates further than SNAP_RADIUS_M are dropped, and so are those
+    that would need more than 60 km/h to make LTA's ETA (eta_s, seconds from
+    now); the closest fit wins, ties going to the one nearer the stop. The
+    projection decides *which stop is next* and how far along the road the bus
+    is — but the path starts at the real fix, not the projected point, because
+    our stop-to-stop chords are coarser than the road and the GPS fix is the
+    better position.
 
     Falls back to a straight line, fix to stop, when the route is unknown or
     nothing fits — the phase 1 behaviour.
     """
     straight = [[fix[0], fix[1], 0], [target[0], target[1], round(haversine_m(*fix, *target))]]
+    reachable_m = MAX_SPEED_MPS * (max(0.0, eta_s) + ETA_SLACK_S)
     candidates = []  # (offset_m, remaining_m, stops, positions, segment_index, end_index, along_m)
     for stops in BUS_ROUTES.get(service_no, {}).values():
         positions = [baked_position(code) for code, _ in stops]
@@ -412,6 +430,8 @@ def route_path(
                 km_a, km_b = stops[i][1], stops[i + 1][1]
                 along = (km_a + t * (km_b - km_a)) * 1000
                 remaining = stops[end][1] * 1000 - along
+                if remaining > reachable_m:
+                    continue  # can't make LTA's ETA from here: wrong stretch
                 candidates.append((offset, remaining, stops, positions, i, end, along))
     if not candidates:
         return straight
@@ -420,14 +440,41 @@ def route_path(
         (c for c in candidates if c[0] <= best_offset + SNAP_TIE_M), key=lambda c: c[1]
     )
 
-    path = [[*positions[i], round(stops[i][1] * 1000 - along)], [fix[0], fix[1], 0]]
-    for j in range(i + 1, end + 1):
-        # max(1, ...) keeps metres strictly rising past the fix: LTA rounds to
-        # 0.1 km, so the next stop can tie with the projected point.
-        metres = max(path[-1][2] + 1, round(stops[j][1] * 1000 - along))
-        path.append([*positions[j], metres])
+    # Stops behind the fix, back to PATH_BEHIND_M, oldest first. Always at
+    # least the one starting the fix's segment.
+    start = i
+    while (
+        start > 0
+        and positions[start - 1] is not None
+        and along - stops[start - 1][1] * 1000 <= PATH_BEHIND_M
+    ):
+        start -= 1
+    behind = [positions[j] for j in range(start, i + 1)]
     # The bake's stop position is the authority on where the stop is.
-    path[-1][0], path[-1][1] = target
+    ahead = [positions[j] for j in range(i + 1, end)] + [target]
+
+    # Metres along the path are measured on the map — along the straight
+    # chords the pin is actually drawn on — then stretched by one factor so the
+    # total matches LTA's road distance to the stop. Using LTA's per-stop
+    # figures directly made pins leap: they are rounded to 0.1 km, so two stops
+    # 120 m apart could sit 1 m apart "along the road", and the pin crossed
+    # them in a single tick. One factor keeps on-screen speed even.
+    chord, total, prev = [], 0.0, fix
+    for point in ahead:
+        total += haversine_m(*prev, *point)
+        chord.append(total)
+        prev = point
+    road = stops[end][1] * 1000 - along
+    stretch = max(1.0, road / total) if total else 1.0  # never shorter than the chords
+
+    path = [[fix[0], fix[1], 0]]
+    back, prev = 0.0, fix
+    for point in reversed(behind):
+        back -= haversine_m(*prev, *point) * stretch
+        path.insert(0, [*point, round(back)])
+        prev = point
+    for point, metres in zip(ahead, chord):
+        path.append([*point, round(metres * stretch)])
     return path
 
 
@@ -637,7 +684,13 @@ def collect_map_buses(
                     "stop_lon": target[1] if target else None,
                     # The road from this bus to its stop; None without a fix
                     # or a stop position. See route_path.
-                    "path": route_path(service_no, stop["code"], (bus["lat"], bus["lon"]), target)
+                    "path": route_path(
+                        service_no,
+                        stop["code"],
+                        (bus["lat"], bus["lon"]),
+                        target,
+                        bus["exact_minutes"] * 60,
+                    )
                     if bus["lat"] is not None and target
                     else None,
                 }
