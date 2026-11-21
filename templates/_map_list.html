@@ -30,6 +30,9 @@
     data-stop-lat="{{ bus.stop_lat }}"
     data-stop-lon="{{ bus.stop_lon }}"
     {% endif %}
+    {# The road to the stop, [[lat, lon, metres], ...] — see route_path in
+       api/index.py. Single-quoted: tojson escapes ' but not ". #}
+    {% if bus.path %}data-path='{{ bus.path | tojson }}'{% endif %}
     {% endif %}
     data-load="{{ bus.load or '' }}"
     data-destination="{{ bus.destination or '' }}"

@@ -340,6 +340,97 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * radius * math.asin(math.sqrt(a))
 
 
+# Every service's stops in route order, with LTA's road distance from the route
+# start in km: {"334": {"1": [["28009", 0.0], ...]}}. Baked by
+# scripts/fetch_bus_routes.py. Missing file = straight-line glide, as before.
+BUS_ROUTES_PATH = BUS_STOPS_PATH.parent / "bus_routes.json"
+try:
+    BUS_ROUTES = json.loads(BUS_ROUTES_PATH.read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    BUS_ROUTES = {}
+
+# How far a GPS fix may sit from the stop-to-stop line and still count as on
+# it. Generous on purpose: the line joins stops with straight chords, and a
+# chord can sit well off a curving road. Next Stop uses 120 m against a
+# detailed road line; ours is coarser, so it needs more room.
+SNAP_RADIUS_M = 300
+# Candidates whose offsets are within this of the best are treated as equally
+# good fits — e.g. a loop service passing the same road both ways — and the one
+# nearer the stop wins.
+SNAP_TIE_M = 30
+
+
+def local_xy(lat: float, lon: float, lat0: float, lon0: float) -> tuple[float, float]:
+    """Metres east/north of (lat0, lon0). Flat-earth, exact enough over a few km."""
+    return (
+        (lon - lon0) * 111_320 * math.cos(math.radians(lat0)),
+        (lat - lat0) * 110_574,
+    )
+
+
+def route_path(
+    service_no: str, stop_code: str, fix: tuple[float, float], target: tuple[float, float]
+) -> list[list[float]]:
+    """The way this bus will drive to its stop, as [[lat, lon, metres], ...].
+
+    Metres are road distance relative to the GPS fix: 0 at the fix, rising to
+    the stop's distance at the last point. One point before the fix (negative
+    metres) is included so the browser can ease a pin that is lagging behind.
+
+    How the bus is placed on its route (cut-down Next Stop "snapping"):
+    every route segment leading to this stop, in either direction and for
+    every time the route visits it, is a candidate. The fix is projected onto
+    each; candidates further than SNAP_RADIUS_M are dropped; the closest fit
+    wins, ties going to the one nearer the stop. The projection decides *which
+    stop is next* and how far along the road the bus is — but the path starts
+    at the real fix, not the projected point, because our stop-to-stop chords
+    are coarser than the road and the GPS fix is the better position.
+
+    Falls back to a straight line, fix to stop, when the route is unknown or
+    nothing fits — the phase 1 behaviour.
+    """
+    straight = [[fix[0], fix[1], 0], [target[0], target[1], round(haversine_m(*fix, *target))]]
+    candidates = []  # (offset_m, remaining_m, stops, positions, segment_index, end_index, along_m)
+    for stops in BUS_ROUTES.get(service_no, {}).values():
+        positions = [baked_position(code) for code, _ in stops]
+        for end, (code, _) in enumerate(stops):
+            if code != stop_code:
+                continue
+            for i in range(end):  # segment i -> i+1, all upstream of the stop
+                a, b = positions[i], positions[i + 1]
+                if a is None or b is None:
+                    continue
+                ax, ay = local_xy(*a, *fix)
+                bx, by = local_xy(*b, *fix)
+                dx, dy = bx - ax, by - ay
+                length2 = dx * dx + dy * dy
+                # Where along a->b the fix projects to, clamped to the segment.
+                t = 0.0 if length2 == 0 else max(0.0, min(1.0, -(ax * dx + ay * dy) / length2))
+                offset = math.hypot(ax + t * dx, ay + t * dy)
+                if offset > SNAP_RADIUS_M:
+                    continue
+                km_a, km_b = stops[i][1], stops[i + 1][1]
+                along = (km_a + t * (km_b - km_a)) * 1000
+                remaining = stops[end][1] * 1000 - along
+                candidates.append((offset, remaining, stops, positions, i, end, along))
+    if not candidates:
+        return straight
+    best_offset = min(c[0] for c in candidates)
+    _, _, stops, positions, i, end, along = min(
+        (c for c in candidates if c[0] <= best_offset + SNAP_TIE_M), key=lambda c: c[1]
+    )
+
+    path = [[*positions[i], round(stops[i][1] * 1000 - along)], [fix[0], fix[1], 0]]
+    for j in range(i + 1, end + 1):
+        # max(1, ...) keeps metres strictly rising past the fix: LTA rounds to
+        # 0.1 km, so the next stop can tie with the projected point.
+        metres = max(path[-1][2] + 1, round(stops[j][1] * 1000 - along))
+        path.append([*positions[j], metres])
+    # The bake's stop position is the authority on where the stop is.
+    path[-1][0], path[-1][1] = target
+    return path
+
+
 def format_distance(metres: float) -> str:
     if metres < 1000:
         return f"{int(round(metres / 10) * 10)} m"
@@ -544,6 +635,11 @@ def collect_map_buses(
                     "arrival_ms": bus["arrival_ms"],
                     "stop_lat": target[0] if target else None,
                     "stop_lon": target[1] if target else None,
+                    # The road from this bus to its stop; None without a fix
+                    # or a stop position. See route_path.
+                    "path": route_path(service_no, stop["code"], (bus["lat"], bus["lon"]), target)
+                    if bus["lat"] is not None and target
+                    else None,
                 }
                 if bus["lat"] is not None and origin is not None:
                     row["distance"] = format_distance(
