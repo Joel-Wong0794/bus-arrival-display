@@ -20,10 +20,6 @@ Output — one entry per pattern (direction), stops with metres along the line:
 
 A stop with no position in bus_stops.json is kept with metres = null, so the
 router simply never targets it.
-
-Licence: neither sgbusdata nor BusRouter SG carries a licence file. The
-underlying data is LTA's (Singapore Open Data Licence) with OneMap/Citymapper
-patches — see README "Gliding pins" before redistributing this file.
 """
 
 import json

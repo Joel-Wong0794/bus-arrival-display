@@ -149,8 +149,6 @@ For each bus, `route_path` in [`api/index.py`](api/index.py) works out where on 
 - Up to 2 km of road ahead is sent; past that the path cuts straight to the stop, which a pin reaches only if polling stops for minutes. Each bus's path is typically 10–30 points.
 - Service not in the bake, or no fit: the path is a straight line from fix to stop.
 
-**Credit and licence.** Road lines: [sgbusdata](https://github.com/cheeaun/sgbusdata) by Lim Chee Aun, from LTA data (Singapore Open Data Licence) with OneMap and Citymapper patches. Neither sgbusdata nor BusRouter SG carries a licence file, so redistribution terms for the derived lines are not stated — check with the author before publishing `data/bus_routes.json` somewhere new.
-
 **The rules** live in [`static/glide.js`](static/glide.js), all in metres along that path:
 
 | Rule | Value | Why |
