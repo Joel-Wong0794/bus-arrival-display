@@ -39,6 +39,7 @@ Two pages, for two different questions:
 | `WEATHER_API_KEY` | —       | Optional. `x-api-key` for data.gov.sg. The endpoint works without one; a key only raises the rate limit.                                                                 |
 | `WEATHER_REGION`  | `west`  | Which NEA forecast region you are in: `north`, `south`, `east`, `west`, `central`. Cannot be derived from `HOME_LAT`/`HOME_LON` — the feed ships no boundaries.          |
 | `WEATHER_TTL_SECONDS` | 900 | How long a fetched forecast is reused before re-fetching.                                                                                                              |
+| `TEMPERATURE_TTL_SECONDS` | 300 | How long the live station temperatures are reused. Shorter than the forecast's: stations report every minute. |
 
 If `HOME_LAT` / `HOME_LON` are unset or unparseable, `/map` says which variables to set and `/` is unaffected — the kiosk display never goes down over a setting only the map needs.
 
@@ -234,12 +235,35 @@ Leaflet is loaded from a CDN; it is the only dependency beyond Flask, requests, 
 
 ## Weather
 
-The `/map` header shows NEA's current forecast for your region instead of a page title — by the time you have opened the page you know what it shows, and what you don't know is whether to take an umbrella to the stop.
+The `/map` header shows the weather **where the map is looking** instead of a page title — by the time you have opened the page you know what it shows, and what you don't know is whether to take an umbrella to the stop.
 
 ```
-Cloudy
-24–34°C · 6 pm 10 Sep to 6 am 11 Sep
+Thundery Showers
+Bedok · 31°C now · 25–34°C today
 ```
+
+### Local, not regional
+
+"Where the map is looking" is the chosen stop, or home on the **Near home** view. On a phone that shares its location, the page has already switched to the stop nearest you (see [Your location](#your-location)), so the weather follows the phone **without the phone's position being used for it** — the server already knows the stop's coordinates. Picking a stop by hand shows the weather where you are going.
+
+Three NEA feeds from data.gov.sg, all free and keyless:
+
+| Feed | How local | Shown as |
+|---|---|---|
+| [2-hour forecast](https://api-open.data.gov.sg/v2/real-time/api/two-hr-forecast) | 47 named areas, each with a position | The condition, icon, and area name |
+| [Air temperature](https://api-open.data.gov.sg/v2/real-time/api/air-temperature) | 17 stations, read every minute | `31°C now` |
+| [24-hour forecast](https://api-open.data.gov.sg/v2/real-time/api/twenty-four-hr-forecast) | 5 regions | The day's low–high, and the fallback |
+
+The area and station are simply the nearest to the stop, by straight-line distance — a scan of 47 and 17 entries, so no index. Each feed returns the whole island in one reply, so one cached copy serves every stop: viewing more stops never means more weather requests.
+
+It degrades one layer at a time:
+
+- **A station that didn't report** in the latest batch is passed over for the next nearest, not shown as blank.
+- **An expired 2-hour forecast** (a feed that stopped updating) is ignored rather than left showing hours-old weather; the condition falls back to the 24-hour regional one, and the layout returns to the original `24–34°C · 6 pm to 6 am`.
+- **A stop with no coordinates** gets the regional forecast, as before this feature.
+- **All three down** gives the plain "Buses near home" title.
+
+The 2-hour window itself (`10.30 am to 12.30 pm`) is left off the header: at phone width it would push the line onto a second row, and "the next two hours" is what anyone glancing at a bus map assumes.
 
 The icon is animated. It comes from [Meteocons](https://github.com/basmilius/weather-icons) by Bas Milius, **MIT licensed** — the fourteen SVGs actually used are vendored into `static/weather/` with the licence alongside them, as MIT requires. They animate via SMIL embedded in the file, which plays inside an `<img>` with no script and no library.
 
@@ -250,7 +274,7 @@ If NEA ever adds a value, it falls through to no icon rather than a broken image
 Source is [data.gov.sg's real-time API](https://api-open.data.gov.sg/v2/real-time/api/twenty-four-hr-forecast), which wraps NEA's 24-hour forecast. Three things worth knowing:
 
 - **The API key is optional.** The endpoint answers unauthenticated; `x-api-key` only raises the rate limit, and the spec marks it `required: false` with no `security` block. Set `WEATHER_API_KEY` if you have one, leave it blank if not — at one fetch per 15 minutes it makes no difference.
-- **The region can't be derived from `HOME_LAT`/`HOME_LON`.** The feed names five regions but ships no boundaries for them, so `WEATHER_REGION` has to be told which one you are in. If NEA omits your region for a period, it falls back to the island-wide forecast.
+- **The region can't be derived from `HOME_LAT`/`HOME_LON`.** The feed names five regions but ships no boundaries for them, so `WEATHER_REGION` has to be told which one you are in. It is now only the fallback, used when the 2-hour feed has nothing for the stop. If NEA omits your region for a period, it falls back to the island-wide forecast.
 - **It is cached for `WEATHER_TTL_SECONDS`** (default 900). NEA reissues a few times a day, so fetching per page load would spend requests redrawing the same words. The *record* is cached rather than the rendered text, so the period still advances against the clock inside a TTL.
 
 The weather is fetched only on the `/map` page load, never in the `/map-list` poll — the list refreshes every 20s and the forecast does not.
@@ -307,3 +331,5 @@ For `/map`:
 13. On `/map?stop=<code>`, a tracked bus's distance should read `… by road`, and its pin should follow the road rather than cutting across.
 14. Run `python scripts/test_nearest_stop.py` — picking the nearest stop, and `/nearest-stop` refusing bad input and GET.
 15. On a phone, open `/map` and allow location: the blue dot should appear and the page should switch to your nearest stop. Choosing **Near home** afterwards must stay on the home view.
+16. Run `python scripts/test_local_weather.py` — nearest area and station, a silent station skipped, and each fallback.
+17. Open `/map?stop=<a stop in the east>` and `/map?stop=<one in the north>`: each header should name a different nearby area (`Bedok · …`, `Woodlands · …`).
