@@ -1054,6 +1054,33 @@ def stop_search():
     return response
 
 
+# Every stop with a position, as [code, name, lat, lon], for the tappable stop
+# rings on /map. Built once at import from the same BUS_STOPS the rest of the
+# app reads, so it can never drift from the picker or the nearest-stop search.
+# Compact on purpose (arrays, not objects; 5 decimals is ~1 m): about 230 KB,
+# ~70 KB once compressed in transit. Stops from an un-regenerated lookup with
+# no position are left out — there is nowhere to draw them.
+STOP_LIST = [
+    [code, stop["name"], round(stop["lat"], 5), round(stop["lon"], 5)]
+    for code, stop in sorted(BUS_STOPS.items())
+    if isinstance(stop.get("lat"), (int, float)) and isinstance(stop.get("lon"), (int, float))
+]
+
+
+@app.route("/stops.json")
+def stop_list():
+    """All stops in one download, rather than "stops in this rectangle" per pan.
+
+    One cached file makes panning instant (no request per move) and keeps the
+    map's position out of URLs. The stops change a few times a year, so a day
+    of caching costs nothing: Vercel's CDN and the phone answer repeat visits,
+    and the function itself is rarely asked.
+    """
+    response = make_response({"stops": STOP_LIST})
+    response.headers["Cache-Control"] = "public, max-age=86400"
+    return response
+
+
 @app.route("/map-list")
 def map_list():
     # The selection rides in the query string rather than being stored: it is a

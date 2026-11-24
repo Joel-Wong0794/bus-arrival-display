@@ -233,6 +233,18 @@ If you opened `/map` with no stop chosen, the first position also **picks the st
 
 Leaflet is loaded from a CDN; it is the only dependency beyond Flask, requests, python-dotenv and htmx. OneMap tiles require the SLA attribution that renders in the map's bottom-right corner — leave it in place.
 
+### Tap a stop
+
+From the zoom the page opens at (15) and closer, every bus stop in view is drawn as a small grey **bus stop sign** — a rounded square with a bus on it. Tap one for a popup with its name, code, and a **Show buses here** button, which opens `/map?stop=<code>` — the same view, link, and weather as choosing it in the search box. Zoomed out further, the signs disappear: 5,000 of them would be clutter, and too dense to hit with a finger.
+
+- **One download, then nothing per pan.** `GET /stops.json` returns every stop as `[code, name, lat, lon]` (~230 KB, ~70 KB compressed), built at startup from the same `data/bus_stops.json` as the picker, and cached for a day (`public, max-age=86400`) so Vercel's CDN and the phone answer repeat visits. Each pan or zoom then picks out the stops inside the visible area in the browser — a sub-millisecond scan of 5,000 positions. Asking the server for "stops in this rectangle" instead would cost a request per pan and put the map's position in URLs.
+- **A square, on purpose.** Every other place marker — you, home, the chosen stop — is a circle, so the shape alone says "stop". Grey, so it never competes with the red and yellow buses or the blues.
+- **Only the stops in view exist on the page** — typically 10–150 small markers, never all 5,000 — so panning stays smooth on a phone. The sign is drawn 16 px inside an invisible 32 px box, which is its finger-sized tap area.
+- **Never in the way.** Signs live in their own map layer between the roads and Leaflet's markers, so a sign never covers a bus, the blue *you* dot, or the chosen stop — which keeps its own bigger ring and is not drawn twice.
+- **Only what changed is redrawn.** Signs that leave the view are removed and new ones added; clearing everything would close an open popup, and opening a popup pans the map to fit it, which would trigger exactly that.
+- **A popup, not an instant switch.** Panning a map on a phone often lands a stray tap; the popup lets you read the name before committing. The button is a real link, so Back returns to the previous stop.
+- **Failure is just no signs.** If `/stops.json` can't load, the map works as before and the search box still finds any stop. The signs are kept out of the Tab order — dozens would sit between the search box and the bus list — so the search box is the keyboard route to the same place.
+
 ## Weather
 
 The `/map` header shows the weather **where the map is looking** instead of a page title — by the time you have opened the page you know what it shows, and what you don't know is whether to take an umbrella to the stop.
@@ -333,3 +345,5 @@ For `/map`:
 15. On a phone, open `/map` and allow location: the blue dot should appear and the page should switch to your nearest stop. Choosing **Near home** afterwards must stay on the home view.
 16. Run `python scripts/test_local_weather.py` — nearest area and station, a silent station skipped, and each fallback.
 17. Open `/map?stop=<a stop in the east>` and `/map?stop=<one in the north>`: each header should name a different nearby area (`Bedok · …`, `Woodlands · …`).
+18. Run `python scripts/test_stops_json.py` — the stop list's shape, its day-long caching, and that it matches the picker's lookup.
+19. On `/map`, tap a stop sign: the popup should name it, and **Show buses here** should open that stop. Zoom out past 15 and the signs should go.
