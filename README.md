@@ -218,6 +218,18 @@ Positions come from `data/bus_stops.json`. When it has none for the focused stop
 
 Stop codes from the URL are validated as five digits before being used, so a hand-edited URL cannot forward junk to DataMall.
 
+### Your location
+
+On a phone that shares its location, `/map` shows a blue **you are here** dot, with a faint circle for how sure the phone is, and it moves as you walk. A **You** entry joins the legend once the first position arrives.
+
+If you opened `/map` with no stop chosen, the first position also **picks the stop nearest you**: the page switches to `/map?stop=<code>`, the same bookmarkable view as choosing it by hand. Three things keep that from getting in the way:
+
+- **It only happens when no choice was made.** Picking **Near home** in the dropdown sends `?stop=` (present, but empty), and that is never overridden — the home view stays reachable.
+- **Only within 2 km of a stop.** Further than that — or outside Singapore — the page stays as it was.
+- **Nothing breaks without it.** Declining the browser's prompt, a device with no location (the kiosk, most desktops), or no connection all leave the page exactly as before. Browsers only offer location on HTTPS or `localhost`, which Vercel provides.
+
+**Privacy.** The position is sent once, as a `POST` body to the app's own `/nearest-stop`, which compares it against `data/bus_stops.json` and keeps nothing. It never goes into a URL, so it cannot end up in server logs or browser history; only the chosen stop code does. Later positions only move the dot and never leave the phone.
+
 Leaflet is loaded from a CDN; it is the only dependency beyond Flask, requests, python-dotenv and htmx. OneMap tiles require the SLA attribution that renders in the map's bottom-right corner — leave it in place.
 
 ## Weather
@@ -293,3 +305,5 @@ For `/map`:
 11. Leave `/map?stop=<a busy stop>` open for ten minutes. The "LTA vs actual" panel should appear once a tracked bus reaches the stop, and reloading should clear it.
 12. Run `python scripts/test_route_path.py` — the polyline decoder and route fitting in `api/index.py`, against made-up roads including a loop.
 13. On `/map?stop=<code>`, a tracked bus's distance should read `… by road`, and its pin should follow the road rather than cutting across.
+14. Run `python scripts/test_nearest_stop.py` — picking the nearest stop, and `/nearest-stop` refusing bad input and GET.
+15. On a phone, open `/map` and allow location: the blue dot should appear and the page should switch to your nearest stop. Choosing **Near home** afterwards must stay on the home view.

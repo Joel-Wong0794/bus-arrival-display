@@ -241,6 +241,15 @@ body {
   box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.9), 0 0 0 6px rgba(127, 211, 255, 0.3);
 }
 
+/* You, from the phone's GPS: a white-rimmed blue dot like a maps app's own,
+   a different blue from home and the stop so the two are never confused. */
+.you-pin {
+  border-radius: 50%;
+  background: #4d8dff;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 4px rgba(77, 141, 255, 0.3);
+}
+
 /* Leaflet's chrome ships light; repaint it for the dark page. */
 .leaflet-container { background: #1c1c1c; }
 
@@ -386,6 +395,7 @@ body {
 .dot.arriving { background: #ff5a5a; }
 .dot.soon { background: #ffd166; }
 .dot.home { background: #7fd3ff; }
+.dot.you { background: #4d8dff; box-shadow: 0 0 0 2px #fff inset; }
 
 .dot.stop {
   background: transparent;
