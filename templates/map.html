@@ -126,6 +126,8 @@
       <span class="dot {{ 'stop' if selected else 'home' }}"></span>
       {{ selected.name if selected else "Home" }}
       {% endif %}
+      {# Shown by startLocating() once the phone has given a position. #}
+      <span id="legend-you" hidden><span class="dot you"></span> You</span>
     </p>
 
     {% if not home_missing or mode == "stop" %}
@@ -462,5 +464,83 @@
       });
     </script>
     {% endif %}
+
+    <script>
+      // The phone's own position, when the device has one and the user allows
+      // it: a "you are here" dot on the map and, if no stop was asked for, a
+      // switch to the stop nearest you. Kept outside the map's script block:
+      // the switch is useful even where no map is drawn (HOME_LAT unset).
+      //
+      // Only the first fix picks a stop; later fixes just move the dot as you
+      // walk. Declining the prompt, or a device with no location (the kiosk,
+      // most desktops), leaves the page exactly as it was.
+      //
+      // Privacy: the position is sent once, in a POST body, to this app's own
+      // /nearest-stop, which keeps nothing. It never goes in a URL.
+      var AUTO_LOCATE = {{ "true" if auto_locate else "false" }};
+
+      function startLocating() {
+        if (!navigator.geolocation) return;
+        var picked = false;
+        var you = null; // the dot
+        var spread = null; // the circle showing how sure the phone is
+        navigator.geolocation.watchPosition(
+          function (pos) {
+            var here = [pos.coords.latitude, pos.coords.longitude];
+            if (typeof map !== "undefined") {
+              if (!you) {
+                spread = L.circle(here, {
+                  radius: pos.coords.accuracy,
+                  color: "#4d8dff",
+                  weight: 1,
+                  fillOpacity: 0.08,
+                  interactive: false,
+                }).addTo(map);
+                you = L.marker(here, {
+                  icon: L.divIcon({ className: "you-pin", html: "", iconSize: [14, 14] }),
+                  zIndexOffset: 900, // above buses, below the focused stop
+                  keyboard: false,
+                })
+                  .addTo(map)
+                  .bindPopup("You are here");
+                var legend = document.getElementById("legend-you");
+                if (legend) legend.hidden = false;
+              } else {
+                you.setLatLng(here);
+                spread.setLatLng(here).setRadius(pos.coords.accuracy);
+              }
+            }
+            if (AUTO_LOCATE && !picked) {
+              picked = true;
+              pickNearestStop(here);
+            }
+          },
+          function () {}, // declined or unavailable: nothing to do
+          // maximumAge lets a phone answer at once from a fix it already has.
+          { enableHighAccuracy: true, maximumAge: 30000, timeout: 20000 }
+        );
+      }
+
+      function pickNearestStop(here) {
+        fetch("/nearest-stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lat: here[0], lon: here[1] }),
+        })
+          .then(function (response) {
+            return response.ok ? response.json() : null;
+          })
+          .then(function (data) {
+            // No stop within 2 km (or not in Singapore): stay put.
+            if (!data || !data.stop) return;
+            // replace(), not a normal navigation: Back should not return to a
+            // page that would immediately switch again.
+            location.replace("/map?stop=" + encodeURIComponent(data.stop.code));
+          })
+          .catch(function () {}); // offline: the page still works without it
+      }
+
+      startLocating();
+    </script>
   </body>
 </html>

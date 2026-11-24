@@ -553,6 +553,32 @@ def find_nearby_stops() -> list[dict]:
 
 NEARBY_STOPS = find_nearby_stops()
 
+# A phone further than this from every stop is not near a bus in any useful
+# sense (or is not in Singapore at all): no stop is picked and /map stays as it
+# was. Generous, because the nearest stop is still the most useful pick from a
+# park or an industrial estate.
+LOCATE_RADIUS_M = 2000
+
+
+def nearest_stop(lat: float, lon: float) -> dict | None:
+    """The stop closest to a point, or None if none is within LOCATE_RADIUS_M.
+
+    Straight-line distance over every stop with a position — ~5,200 of them,
+    well under a millisecond — so no index is needed. Used by /nearest-stop
+    when a phone shares its location on /map.
+    """
+    best = None
+    for code in BUS_STOPS:
+        position = baked_position(code)
+        if position is None:
+            continue
+        metres = haversine_m(lat, lon, *position)
+        if best is None or metres < best[0]:
+            best = (metres, code)
+    if best is None or best[0] > LOCATE_RADIUS_M:
+        return None
+    return {"code": best[1], "name": stop_name(best[1]), "metres": round(best[0])}
+
 
 def valid_stop_code(code: str | None) -> str | None:
     """A stop code safe to query and print, or None.
@@ -859,9 +885,34 @@ def bus_map():
             "map.html",
             refresh_seconds=REFRESH_SECONDS,
             weather=read_weather(now),
+            # Only when no stop was asked for at all. Picking "Near home" in
+            # the picker submits ?stop= (present but empty) and must stay on
+            # the home view rather than be overridden by the phone's location.
+            auto_locate="stop" not in request.args,
             **map_context(now, request.args.get("stop")),
         )
     )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/nearest-stop", methods=["POST"])
+def nearest_stop_route():
+    """{"lat": .., "lon": ..} in, {"stop": {"code", "name", "metres"} | null} out.
+
+    POST with a JSON body rather than GET with a query string, so a phone's
+    position never lands in a URL — where it would sit in server logs and
+    browser history. Nothing here stores it either.
+    """
+    body = request.get_json(silent=True) or {}
+    try:
+        lat, lon = float(body["lat"]), float(body["lon"])
+    except (KeyError, TypeError, ValueError):
+        return {"error": "lat and lon are required numbers"}, 400
+    # Written so NaN and infinity fail too: every comparison with NaN is False.
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return {"error": "lat or lon out of range"}, 400
+    response = make_response({"stop": nearest_stop(lat, lon)})
     response.headers["Cache-Control"] = "no-store"
     return response
 
