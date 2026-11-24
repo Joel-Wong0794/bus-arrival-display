@@ -70,7 +70,6 @@ WEATHER_REGION = os.environ.get("WEATHER_REGION", "west").strip().lower()
 # simply fetches again, which is why this needs no store.
 WEATHER_TTL_SECONDS = int(os.environ.get("WEATHER_TTL_SECONDS", "900"))
 
-_weather_cache: dict = {"fetched_at": None, "record": None}
 
 # NEA's 23 forecast strings mapped onto Meteocons icons in static/weather.
 # "{dn}" is filled with day or night: NEA marks the distinction on some values
@@ -130,64 +129,184 @@ def current_period(periods: list[dict], now: datetime) -> dict | None:
     return periods[0] if periods else None
 
 
-def weather_record(now: datetime) -> dict | None:
-    """The raw NEA record, cached for WEATHER_TTL_SECONDS.
+# The 24-hour feed above answers for a fifth of the island at once. These two
+# answer for where the map is looking: NEA's 2-hour forecast for 47 named
+# areas (Ang Mo Kio, Bedok, ...), and the live reading at 17 weather stations.
+# Both ship each area's or station's coordinates, so "nearest" needs no lookup
+# table of our own. Same host, same optional key, no extra sign-up.
+NOWCAST_URL = "https://api-open.data.gov.sg/v2/real-time/api/two-hr-forecast"
+TEMPERATURE_URL = "https://api-open.data.gov.sg/v2/real-time/api/air-temperature"
+# Stations report every minute, so the temperature goes stale far sooner than
+# a forecast does. Five minutes keeps it honest at about one request per warm
+# instance per five minutes, whatever the number of stops being viewed: the
+# feed returns every station in one reply, so the cache is island-wide.
+TEMPERATURE_TTL_SECONDS = int(os.environ.get("TEMPERATURE_TTL_SECONDS", "300"))
 
-    Caches the record rather than the rendered values so the period is always
-    chosen against the current clock — a cached "6am to Midday" would otherwise
-    linger up to a full TTL after that window closed.
+# One cache entry per feed URL: {"fetched_at": datetime, "data": dict}.
+_feed_cache: dict = {}
+
+
+def fetch_feed(url: str, now: datetime, ttl_seconds: int) -> dict | None:
+    """A data.gov.sg feed's "data" object, cached for ttl_seconds.
+
+    Caches the raw feed rather than a rendered answer, for two reasons: every
+    area and station arrives in one reply, so one cached copy serves every stop
+    on the island; and the period/staleness checks then always run against the
+    current clock instead of the clock at fetch time.
     """
-    fetched_at = _weather_cache["fetched_at"]
-    if fetched_at and (now - fetched_at).total_seconds() < WEATHER_TTL_SECONDS:
-        return _weather_cache["record"]
+    entry = _feed_cache.get(url)
+    if entry and (now - entry["fetched_at"]).total_seconds() < ttl_seconds:
+        return entry["data"]
 
     headers = {"accept": "application/json"}
     if WEATHER_API_KEY:
         headers["x-api-key"] = WEATHER_API_KEY
     try:
-        response = requests.get(WEATHER_URL, headers=headers, timeout=5)
+        response = requests.get(url, headers=headers, timeout=5)
         response.raise_for_status()
-        record = response.json()["data"]["records"][0]
-    except (requests.RequestException, ValueError, KeyError, IndexError):
-        # Serve the last good reading rather than nothing: a 24-hour forecast
-        # ages gracefully, and a blank header is worse than a slightly old one.
-        return _weather_cache["record"]
+        data = response.json()["data"]
+    except (requests.RequestException, ValueError, KeyError, TypeError):
+        # Serve the last good copy rather than nothing: a slightly old reading
+        # beats a blank header. None only if this instance never got one.
+        return entry["data"] if entry else None
 
-    _weather_cache["fetched_at"] = now
-    _weather_cache["record"] = record
-    return record
+    _feed_cache[url] = {"fetched_at": now, "data": data}
+    return data
 
 
-def read_weather(now: datetime) -> dict | None:
-    """What it's doing outside, or None if NEA can't be reached.
+def weather_record(now: datetime) -> dict | None:
+    """The raw 24-hour NEA record (regional forecast and the day's low-high)."""
+    data = fetch_feed(WEATHER_URL, now, WEATHER_TTL_SECONDS)
+    try:
+        return data["records"][0]
+    except (TypeError, KeyError, IndexError):
+        return None
+
+
+def nearest_named(places: list, lat: float, lon: float, position) -> dict | None:
+    """The entry in places closest to (lat, lon); position(entry) -> (lat, lon).
+
+    A straight scan: 47 areas or 17 stations, so there is nothing to index.
+    Entries with a missing or malformed position are skipped, not fatal.
+    """
+    best, best_m = None, None
+    for place in places:
+        try:
+            metres = haversine_m(lat, lon, *position(place))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if best_m is None or metres < best_m:
+            best, best_m = place, metres
+    return best
+
+
+def local_forecast(now: datetime, lat: float, lon: float) -> dict | None:
+    """NEA's 2-hour forecast for the named area nearest (lat, lon).
+
+    None when the feed is down, the area has no forecast, or the forecast has
+    expired (a feed that stopped updating must not keep showing "Fair" from
+    hours ago) — the caller then falls back to the 24-hour regional one.
+    """
+    data = fetch_feed(NOWCAST_URL, now, WEATHER_TTL_SECONDS)
+    if not data:
+        return None
+    area = nearest_named(
+        data.get("area_metadata", []),
+        lat,
+        lon,
+        lambda a: (a["label_location"]["latitude"], a["label_location"]["longitude"]),
+    )
+    try:
+        item = data["items"][0]
+        end = datetime.fromisoformat(item["valid_period"]["end"])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+    if area is None or now >= end:
+        return None
+    text = next(
+        (f.get("forecast") for f in item.get("forecasts", []) if f.get("area") == area["name"]),
+        None,
+    )
+    if not text:
+        return None
+    return {"text": text, "area": area["name"], "period": item["valid_period"].get("text")}
+
+
+def local_temperature(now: datetime, lat: float, lon: float) -> int | None:
+    """The latest reading at the weather station nearest (lat, lon), whole °C.
+
+    Only stations that actually reported in the latest batch are considered:
+    one offline station must not blank the temperature when a neighbour has it.
+    """
+    data = fetch_feed(TEMPERATURE_URL, now, TEMPERATURE_TTL_SECONDS)
+    if not data:
+        return None
+    try:
+        values = {r["stationId"]: r["value"] for r in data["readings"][0]["data"]}
+    except (KeyError, IndexError, TypeError):
+        return None
+    reporting = [s for s in data.get("stations", []) if s.get("id") in values]
+    station = nearest_named(
+        reporting,
+        lat,
+        lon,
+        lambda s: (s["location"]["latitude"], s["location"]["longitude"]),
+    )
+    if station is None:
+        return None
+    try:
+        return round(float(values[station["id"]]))
+    except (TypeError, ValueError):
+        return None
+
+
+def read_weather(now: datetime, place: tuple | None = None) -> dict | None:
+    """What it's doing outside, or None if NEA can't be reached at all.
+
+    place is where the map is looking: the chosen stop, or home. Since the
+    phone-location feature picks the stop nearest the phone, that stop stands
+    in for the phone itself, so the device's own position is never needed here
+    and never leaves the phone for this. With a place, the condition comes from
+    the nearest of NEA's 47 areas and the temperature from the nearest station;
+    without one (or if those feeds fail) it is the 24-hour regional forecast,
+    exactly as before.
 
     None rather than raising, and never on the arrivals path: the weather is a
     garnish on a page whose job is bus times. An NEA outage must not take the
     departure board down with it.
     """
-    record = weather_record(now)
-    if not record:
-        return None
-
+    record = weather_record(now) or {}
     general = record.get("general", {})
     temperature = general.get("temperature", {})
     period = current_period(record.get("periods", []), now) or {}
     # Region first, island-wide as the fallback — a region NEA didn't send is
     # better answered generally than not at all.
-    forecast = period.get("regions", {}).get(WEATHER_REGION) or general.get(
+    regional = period.get("regions", {}).get(WEATHER_REGION) or general.get(
         "forecast", {}
     )
-    if not forecast.get("text"):
+
+    local = local_forecast(now, *place) if place else None
+    now_c = local_temperature(now, *place) if place else None
+    text = local["text"] if local else regional.get("text")
+    if not text:
         return None
     return {
-        "text": forecast["text"],
-        "icon": weather_icon(forecast["text"], now),
+        # The 2-hour feed suffixes most values with "(Day)" or "(Night)". The
+        # icon already says which (a sun or a moon), so the words drop it; the
+        # icon lookup still gets the full string, which is what it is keyed on.
+        "text": text.removesuffix(" (Day)").removesuffix(" (Night)"),
+        "icon": weather_icon(text, now),
+        # Set only when the condition is the local 2-hour one; the template
+        # uses it to choose between the local and the regional layout.
+        "area": local["area"] if local else None,
+        "now": now_c,
         "low": temperature.get("low"),
         "high": temperature.get("high"),
         "region": WEATHER_REGION,
-        "period": period.get("timePeriod", {}).get("text"),
+        "period": local["period"] if local else period.get("timePeriod", {}).get("text"),
         "outlook": general.get("forecast", {}).get("text"),
     }
+
 
 # Destination-code to stop-name lookup, baked by scripts/fetch_bus_stops.py.
 # Read once at import: the arrival feed names a destination only by code, and
@@ -880,16 +999,22 @@ def bus_map():
     # Only on the page load, not on /map-list: the list polls every 20s and the
     # forecast changes a few times a day, so putting it in the poll would spend
     # a request an hour to redraw the same words.
+    context = map_context(now, request.args.get("stop"))
+    # Weather for where the map is looking: the chosen stop (on a phone, the
+    # one nearest it) or home. None when that stop has no coordinates, which
+    # falls back to the regional forecast.
+    focus = context["focus_lat"], context["focus_lon"]
+    place = focus if None not in focus else None
     response = make_response(
         render_template(
             "map.html",
             refresh_seconds=REFRESH_SECONDS,
-            weather=read_weather(now),
+            weather=read_weather(now, place),
             # Only when no stop was asked for at all. Picking "Near home" in
             # the picker submits ?stop= (present but empty) and must stay on
             # the home view rather than be overridden by the phone's location.
             auto_locate="stop" not in request.args,
-            **map_context(now, request.args.get("stop")),
+            **context,
         )
     )
     response.headers["Cache-Control"] = "no-store"

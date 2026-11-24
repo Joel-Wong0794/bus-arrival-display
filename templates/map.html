@@ -37,11 +37,25 @@
         {% endif %}
         <span class="wx-words">
           <span class="wx-text">{{ weather.text }}</span>
+          {# Local: "Bedok · 31°C now · 25–34°C today" — the area NEA's 2-hour
+             forecast came from (so a surprising forecast can be checked), the
+             nearest station's live reading, then the island's day range. The
+             2-hour window itself is left off: on a phone-width header it would
+             push the line onto two rows, and "the next two hours" is what
+             anyone glancing at a bus map assumes anyway.
+             Regional (no stop position, or the 2-hour feed is down): the
+             original "25–34°C · Midday to 6pm" layout. #}
           <span class="wx-meta">
+            {%- if weather.area -%}
+            {{ weather.area }}
+            {%- if weather.now is not none %} &middot; {{ weather.now }}&deg;C now{% endif -%}
+            {%- if weather.low is not none and weather.high is not none %} &middot; {{ weather.low }}&ndash;{{ weather.high }}&deg;C today{% endif -%}
+            {%- else -%}
             {%- if weather.low is not none and weather.high is not none -%}
             {{ weather.low }}&ndash;{{ weather.high }}&deg;C
             {%- endif -%}
             {%- if weather.period %} &middot; {{ weather.period }}{% endif -%}
+            {%- endif -%}
           </span>
         </span>
       </div>
