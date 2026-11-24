@@ -261,6 +261,30 @@ body {
 
 .leaflet-popup-content { font-size: 0.85rem; line-height: 1.5; }
 
+/* Popup on a tapped stop ring: name, code, then the one thing to do. */
+.stop-popup-code {
+  color: #8b8b8b;
+  font-size: 0.78rem;
+}
+
+/* A thumb-sized button, not a text link: it is the popup's only action. */
+.leaflet-popup-content a.stop-go {
+  display: block;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #7fd3ff;
+  color: #111;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+
+.leaflet-popup-content a.stop-go:focus-visible {
+  outline: 2px solid #f5f5f5;
+  outline-offset: 2px;
+}
+
 .leaflet-control-attribution {
   background: rgba(17, 17, 17, 0.8) !important;
   color: #888 !important;
@@ -402,6 +426,12 @@ body {
   border: 3px solid #7fd3ff;
   width: 11px;
   height: 11px;
+}
+
+/* Matches the tappable stop rings drawn on the map's canvas in map.html. */
+.dot.pick {
+  background: #111;
+  border: 2px solid rgba(127, 211, 255, 0.6);
 }
 
 .dot + .dot { margin-left: 10px; }

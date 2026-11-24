@@ -233,6 +233,17 @@ If you opened `/map` with no stop chosen, the first position also **picks the st
 
 Leaflet is loaded from a CDN; it is the only dependency beyond Flask, requests, python-dotenv and htmx. OneMap tiles require the SLA attribution that renders in the map's bottom-right corner — leave it in place.
 
+### Tap a stop
+
+From the zoom the page opens at (15) and closer, every bus stop in view is drawn as a small dim ring. Tap one for a popup with its name, code, and a **Show buses here** button, which opens `/map?stop=<code>` — the same view, link, and weather as choosing it in the search box. Zoomed out further, the rings disappear: 5,000 of them would be clutter, and too dense to hit with a finger.
+
+- **One download, then nothing per pan.** `GET /stops.json` returns every stop as `[code, name, lat, lon]` (~230 KB, ~70 KB compressed), built at startup from the same `data/bus_stops.json` as the picker, and cached for a day (`public, max-age=86400`) so Vercel's CDN and the phone answer repeat visits. Each pan or zoom then picks out the stops inside the visible area in the browser — a sub-millisecond scan of 5,000 positions. Asking the server for "stops in this rectangle" instead would cost a request per pan and put the map's position in URLs.
+- **Drawn on one canvas**, not as 5,000 page elements, so panning stays smooth on a phone. The ring is drawn small but its tap area is a finger's width (`tolerance: 10`).
+- **Never in the way.** Canvas rings sit below Leaflet's markers, so a ring never covers a bus, the blue *you* dot, or the chosen stop — which keeps its own bigger ring and is not drawn twice.
+- **Only what changed is redrawn.** Rings that leave the view are removed and new ones added; clearing everything would close an open popup, and opening a popup pans the map to fit it, which would trigger exactly that.
+- **A popup, not an instant switch.** Panning a map on a phone often lands a stray tap; the popup lets you read the name before committing. The button is a real link, so Back returns to the previous stop.
+- **Failure is just no rings.** If `/stops.json` can't load, the map works as before and the search box still finds any stop. The rings aren't keyboard-focusable (they are canvas drawings); the search box is the keyboard route to the same place.
+
 ## Weather
 
 The `/map` header shows the weather **where the map is looking** instead of a page title — by the time you have opened the page you know what it shows, and what you don't know is whether to take an umbrella to the stop.
@@ -333,3 +344,5 @@ For `/map`:
 15. On a phone, open `/map` and allow location: the blue dot should appear and the page should switch to your nearest stop. Choosing **Near home** afterwards must stay on the home view.
 16. Run `python scripts/test_local_weather.py` — nearest area and station, a silent station skipped, and each fallback.
 17. Open `/map?stop=<a stop in the east>` and `/map?stop=<one in the north>`: each header should name a different nearby area (`Bedok · …`, `Woodlands · …`).
+18. Run `python scripts/test_stops_json.py` — the stop list's shape, its day-long caching, and that it matches the picker's lookup.
+19. On `/map`, tap a stop ring: the popup should name it, and **Show buses here** should open that stop. Zoom out past 15 and the rings should go.

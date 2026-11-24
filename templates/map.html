@@ -140,6 +140,7 @@
       <span class="dot {{ 'stop' if selected else 'home' }}"></span>
       {{ selected.name if selected else "Home" }}
       {% endif %}
+      <span class="dot pick"></span> Tap a stop to choose it
       {# Shown by startLocating() once the phone has given a position. #}
       <span id="legend-you" hidden><span class="dot you"></span> You</span>
     </p>
@@ -178,6 +179,98 @@
         .addTo(map)
         .bindPopup({{ (selected.name ~ " (" ~ selected.code ~ ")" if selected else "Home") | tojson }});
       {% endif %}
+
+      // ---- Tappable stops ------------------------------------------------
+      // Every bus stop in view, as a small ring you can tap to choose it.
+      // /stops.json (all ~5000 stops) is fetched once and cached for a day;
+      // after that, panning costs no requests — each move just picks out the
+      // stops inside the visible area, a sub-millisecond scan.
+      //
+      // Only from street zoom: island-wide, 5000 rings are clutter and too
+      // dense to hit with a finger. 15 is the zoom the page opens at.
+      var STOPS_MIN_ZOOM = 15;
+      // The stop being viewed keeps its own bigger ring; don't draw it twice.
+      var SELECTED_CODE = {{ (selected.code if selected else "") | tojson }};
+      // One canvas for all the rings, not one DOM element each, so panning
+      // stays smooth on a phone. tolerance widens the tappable area to a
+      // finger's width around a ring that is drawn much smaller. Canvas layers
+      // sit in Leaflet's overlay pane, below every marker, so a ring never
+      // covers a bus, the blue "you" dot, or the chosen stop.
+      var stopRenderer = L.canvas({ padding: 0.2, tolerance: 10 });
+      var allStops = null; // [[code, name, lat, lon], ...] once loaded
+      var drawnStops = {}; // code -> circleMarker currently on the map
+
+      // Popup body built from DOM nodes, not an HTML string: stop names come
+      // from LTA's data, and textContent can't be tricked into markup.
+      function stopPopup(stop) {
+        var box = document.createElement("div");
+        var name = document.createElement("strong");
+        name.textContent = stop[1];
+        var code = document.createElement("div");
+        code.className = "stop-popup-code";
+        code.textContent = "Stop " + stop[0];
+        // A real link, so Back returns to this view and a long-press can open
+        // it in a new tab. Same URL as choosing the stop in the search box.
+        var go = document.createElement("a");
+        go.className = "stop-go";
+        go.href = "/map?stop=" + encodeURIComponent(stop[0]);
+        go.textContent = "Show buses here";
+        box.append(name, code, go);
+        return box;
+      }
+
+      function drawStops() {
+        var wanted = {};
+        if (allStops && map.getZoom() >= STOPS_MIN_ZOOM) {
+          // A margin beyond the edges, so a short pan doesn't reveal blanks.
+          var view = map.getBounds().pad(0.2);
+          allStops.forEach(function (stop) {
+            if (stop[0] !== SELECTED_CODE && view.contains([stop[2], stop[3]])) {
+              wanted[stop[0]] = stop;
+            }
+          });
+        }
+        // Remove only what left the view, add only what entered it. Clearing
+        // and redrawing everything would also close an open popup — and
+        // opening one pans the map to fit it, which lands right back here.
+        Object.keys(drawnStops).forEach(function (code) {
+          var ring = drawnStops[code];
+          if (!wanted[code] && !ring.isPopupOpen()) {
+            ring.remove();
+            delete drawnStops[code];
+          }
+        });
+        Object.keys(wanted).forEach(function (code) {
+          if (drawnStops[code]) return;
+          var stop = wanted[code];
+          drawnStops[code] = L.circleMarker([stop[2], stop[3]], {
+            renderer: stopRenderer,
+            radius: 5,
+            color: "#7fd3ff", // the chosen stop's blue, dimmed: a stop you could pick
+            weight: 2,
+            opacity: 0.6,
+            fillColor: "#111",
+            fillOpacity: 0.9,
+          })
+            .bindPopup(function () {
+              return stopPopup(stop);
+            })
+            .addTo(map);
+        });
+      }
+
+      map.on("moveend", drawStops); // zooming fires moveend too
+      fetch("/stops.json")
+        .then(function (response) {
+          return response.ok ? response.json() : null;
+        })
+        .then(function (data) {
+          if (!data) return;
+          allStops = data.stops;
+          drawStops();
+        })
+        // No rings is the whole failure mode: the search box still works.
+        .catch(function () {});
 
       // Row key ("stop|service|rank") -> the marker drawn for that row. Rebuilt
       // on every poll, because ranks shift: when a service's first bus passes
