@@ -181,24 +181,40 @@
       {% endif %}
 
       // ---- Tappable stops ------------------------------------------------
-      // Every bus stop in view, as a small ring you can tap to choose it.
-      // /stops.json (all ~5000 stops) is fetched once and cached for a day;
-      // after that, panning costs no requests — each move just picks out the
-      // stops inside the visible area, a sub-millisecond scan.
+      // Every bus stop in view, as a small "bus stop sign" you can tap to
+      // choose it. /stops.json (all ~5000 stops) is fetched once and cached
+      // for a day; after that, panning costs no requests — each move just
+      // picks out the stops inside the visible area, a sub-millisecond scan.
       //
-      // Only from street zoom: island-wide, 5000 rings are clutter and too
+      // Only from street zoom: island-wide, 5000 signs are clutter and too
       // dense to hit with a finger. 15 is the zoom the page opens at.
       var STOPS_MIN_ZOOM = 15;
       // The stop being viewed keeps its own bigger ring; don't draw it twice.
       var SELECTED_CODE = {{ (selected.code if selected else "") | tojson }};
-      // One canvas for all the rings, not one DOM element each, so panning
-      // stays smooth on a phone. tolerance widens the tappable area to a
-      // finger's width around a ring that is drawn much smaller. Canvas layers
-      // sit in Leaflet's overlay pane, below every marker, so a ring never
-      // covers a bus, the blue "you" dot, or the chosen stop.
-      var stopRenderer = L.canvas({ padding: 0.2, tolerance: 10 });
+      // A square, not a circle: every other place marker here — you, home,
+      // the chosen stop — is round, so the shape alone says "stop". Grey so
+      // it never competes with the red/yellow buses or the blues.
+      //
+      // Each sign is a small DOM marker (canvas can't draw the bus glyph).
+      // Cheap at this scale: only the stops in view exist, typically 10–150.
+      // The visible square is 16px inside a 32px invisible box, which is the
+      // finger-sized tap area (see .stop-sign in map.css).
+      var STOP_ICON = L.divIcon({
+        className: "stop-sign",
+        iconSize: [32, 32],
+        html:
+          '<span class="stop-sign-face"><svg viewBox="0 0 12 12" aria-hidden="true">' +
+          '<rect x="2" y="1.5" width="8" height="7.5" rx="1.5" fill="currentColor"/>' +
+          '<rect x="3.2" y="2.7" width="5.6" height="2.8" rx="0.5" fill="#d9dde2"/>' +
+          '<circle cx="4" cy="10" r="1" fill="currentColor"/>' +
+          '<circle cx="8" cy="10" r="1" fill="currentColor"/></svg></span>',
+      });
+      // Their own pane, between the road layers (400) and Leaflet's markers
+      // (600), so a sign never covers a bus, the blue "you" dot, or the
+      // chosen stop, whatever order they were added in.
+      map.createPane("stops").style.zIndex = 450;
       var allStops = null; // [[code, name, lat, lon], ...] once loaded
-      var drawnStops = {}; // code -> circleMarker currently on the map
+      var drawnStops = {}; // code -> marker currently on the map
 
       // Popup body built from DOM nodes, not an HTML string: stop names come
       // from LTA's data, and textContent can't be tricked into markup.
@@ -234,23 +250,23 @@
         // and redrawing everything would also close an open popup — and
         // opening one pans the map to fit it, which lands right back here.
         Object.keys(drawnStops).forEach(function (code) {
-          var ring = drawnStops[code];
-          if (!wanted[code] && !ring.isPopupOpen()) {
-            ring.remove();
+          var sign = drawnStops[code];
+          if (!wanted[code] && !sign.isPopupOpen()) {
+            sign.remove();
             delete drawnStops[code];
           }
         });
         Object.keys(wanted).forEach(function (code) {
           if (drawnStops[code]) return;
           var stop = wanted[code];
-          drawnStops[code] = L.circleMarker([stop[2], stop[3]], {
-            renderer: stopRenderer,
-            radius: 5,
-            color: "#7fd3ff", // the chosen stop's blue, dimmed: a stop you could pick
-            weight: 2,
-            opacity: 0.6,
-            fillColor: "#111",
-            fillOpacity: 0.9,
+          drawnStops[code] = L.marker([stop[2], stop[3]], {
+            icon: STOP_ICON,
+            pane: "stops",
+            title: stop[1], // the name on hover, and for screen readers
+            // Out of the Tab order: dozens of stops would sit between the
+            // search box and the bus list. The search box is the keyboard
+            // route to any stop.
+            keyboard: false,
           })
             .bindPopup(function () {
               return stopPopup(stop);
@@ -269,7 +285,7 @@
           allStops = data.stops;
           drawStops();
         })
-        // No rings is the whole failure mode: the search box still works.
+        // No signs is the whole failure mode: the search box still works.
         .catch(function () {});
 
       // Row key ("stop|service|rank") -> the marker drawn for that row. Rebuilt

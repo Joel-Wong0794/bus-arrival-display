@@ -250,6 +250,34 @@ body {
   box-shadow: 0 0 0 4px rgba(77, 141, 255, 0.3);
 }
 
+/* A tappable bus stop: a small "bus stop sign" (grey rounded square with a
+   bus glyph) centred in an invisible 32px box. The box is the tap area, sized
+   for a finger; only the 16px face is drawn. Square on purpose: every other
+   place marker (you, home, the chosen stop) is a circle. */
+.stop-sign {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+
+.stop-sign-face {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: #d9dde2;
+  color: #1b1f24;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  opacity: 0.85;
+}
+
+.stop-sign-face svg { width: 12px; height: 12px; }
+
+.stop-sign:hover .stop-sign-face { opacity: 1; }
+
 /* Leaflet's chrome ships light; repaint it for the dark page. */
 .leaflet-container { background: #1c1c1c; }
 
@@ -261,7 +289,7 @@ body {
 
 .leaflet-popup-content { font-size: 0.85rem; line-height: 1.5; }
 
-/* Popup on a tapped stop ring: name, code, then the one thing to do. */
+/* Popup on a tapped stop sign: name, code, then the one thing to do. */
 .stop-popup-code {
   color: #8b8b8b;
   font-size: 0.78rem;
@@ -428,10 +456,10 @@ body {
   height: 11px;
 }
 
-/* Matches the tappable stop rings drawn on the map's canvas in map.html. */
+/* The legend's copy of the tappable stop sign: square, like the one on the map. */
 .dot.pick {
-  background: #111;
-  border: 2px solid rgba(127, 211, 255, 0.6);
+  border-radius: 2px;
+  background: #d9dde2;
 }
 
 .dot + .dot { margin-left: 10px; }
