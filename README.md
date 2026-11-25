@@ -4,10 +4,98 @@ A live-updating web dashboard showing LTA bus arrival times for bus stops, displ
 
 Two pages, for two different questions:
 
-| Page   | Question it answers          | Where it is used                                          |
-| ------ | ---------------------------- | --------------------------------------------------------- |
-| `/`    | "When is the next bus?"      | The kiosk tablet — glanceable from across the room        |
-| `/map` | "Where is it right now?"     | A phone — imminent buses plotted on a map                 |
+| Page | Live URL | Question it answers | Where it is used |
+| --- | --- | --- | --- |
+| `/` | [bus-arrival-display.vercel.app](https://bus-arrival-display.vercel.app/) | "When is the next bus?" | The kiosk tablet — glanceable from across the room |
+| `/map` | [bus-arrival-display.vercel.app/map](https://bus-arrival-display.vercel.app/map) | "Where is it right now?" | A phone — imminent buses plotted on a map |
+
+## Architecture at a Glance
+
+```text
+Kiosk / phone browser
+        │  HTML pages and htmx polling
+        ▼
+Vercel serverless function
+        │  Flask routes, Jinja rendering, ETA and map processing
+        ├────────► LTA DataMall (arrivals and bus-stop data)
+        ├────────► data.gov.sg (optional weather: 24-hour forecast,
+        │                       2-hour area forecast, air temperature)
+        └────────► Bundled bus_stops.json (names and coordinates)
+```
+
+The browser handles presentation, one-second countdowns, and Leaflet map
+updates. Flask keeps API keys server-side, fetches and normalizes live data, and
+returns complete pages or small HTML fragments. The application is stateless:
+configuration comes from environment variables, reference data is bundled as a
+static JSON file, and no database is required.
+
+## How the App Works
+
+The app is a stateless Flask application deployed as a Python serverless
+function on Vercel. `vercel.json` sends every request to `api/index.py`, while
+the Jinja templates, CSS, weather icons, and baked bus-stop lookup are bundled
+with the function. There is no database, background worker, or server-side
+session.
+
+### Arrival dashboard
+
+1. A browser loads `/`, which returns the dashboard shell.
+2. htmx immediately requests `/arrivals` and repeats that request every
+   `REFRESH_SECONDS` (20 seconds by default).
+3. Flask calls LTA DataMall's `BusArrival` endpoint once for each configured
+   stop. The API key is added to these server-to-server requests and is never
+   exposed to the browser.
+4. The backend parses up to three arriving vehicles per service, resolves their
+   destinations, applies `BUFFER_SECONDS`, floors the result to whole minutes,
+   and renders the `_arrivals.html` fragment.
+5. Each rendered ETA also carries its absolute arrival timestamp. JavaScript in
+   the browser recalculates the displayed countdown every second, so the number
+   remains current between API polls and after the kiosk wakes from sleep.
+
+### Map and stop search
+
+1. `/map` performs the initial server-side render, fetches the current NEA
+   weather for the map's focus point (the chosen stop, or home), and loads
+   Leaflet with OneMap tiles.
+2. The page polls `/map-list` every `REFRESH_SECONDS`. That response contains
+   both the visible bus rows and data attributes used to create or move map
+   markers.
+3. Markers are keyed by stop, service, and arrival rank. Existing markers move
+   in place instead of being rebuilt, which preserves an open popup and avoids
+   resetting the map on every refresh.
+4. Typing in the stop search sends a delayed htmx request to `/stops`. Selecting
+   a result opens `/map?stop=<code>`, making the selected stop bookmarkable and
+   keeping the choice local to that browser tab.
+5. The page also downloads `/stops.json` once (every stop's code, name, and
+   position, cached for a day). From zoom 15 inward the browser draws the stops
+   in view as grey bus-stop signs, filtering that list itself, so panning makes
+   no requests. Tapping a sign and choosing **Show buses here** opens the same
+   `/map?stop=<code>` as the search box.
+6. If the phone shares its location, a blue dot shows where you are. On the
+   first fix, when no stop was chosen, the position is sent once as a `POST`
+   body to `/nearest-stop`, and the page switches to the stop it returns. The
+   position never goes into a URL, and later fixes only move the dot.
+7. The home view shows buses within `MAP_WINDOW_MINUTES`; a selected-stop view
+   shows everything currently running at that stop. Buses without a live GPS
+   fix remain in the list but are not plotted.
+
+### Reference data, caching, and failures
+
+- `data/bus_stops.json` maps stop codes to names and coordinates. It is
+  generated manually by `scripts/fetch_bus_stops.py` and loaded once when the
+  serverless function starts, avoiding a scan of roughly 5,200 stops on every
+  request.
+- Weather and fallback stop positions use small in-memory caches. Each of the
+  three NEA feeds is cached once for the whole island, not per stop, and the
+  last good copy is reused if a feed fails. These are performance optimizations
+  for warm Vercel instances; correctness does not depend on them surviving
+  between requests.
+- Dynamic responses use `Cache-Control: no-store` so an old kiosk browser does
+  not reuse stale arrival data.
+- A failed bus-stop request displays that stop as unavailable without hiding
+  successful stops. Missing GPS data, weather outages, stale reference data, or
+  unset home coordinates each disable only the feature that needs them rather
+  than taking down the arrival dashboard.
 
 ## Setup
 
