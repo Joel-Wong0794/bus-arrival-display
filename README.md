@@ -1,18 +1,17 @@
 # Bus Arrival Display
 
-A live-updating web dashboard showing LTA bus arrival times for bus stops, displayed on an old 7" Android tablet running a browser in kiosk mode. The app fetches real-time ETAs from DataMall every ~20 seconds and counts them down on the client every second, so the displayed number stays current between polls and keeps working even when the kiosk screen wakes from sleep.
+A live bus map for Singapore. One page shows where the buses heading to your stops are right now, how long until each one arrives, and the weather for the walk there. It runs in any phone or desktop browser. ETAs come from LTA DataMall every ~20 seconds, and between polls each pin glides along its real road towards the stop.
 
-Two pages, for two different questions:
+| Live URL | What it opens on |
+| --- | --- |
+| [bus-arrival-display.vercel.app](https://bus-arrival-display.vercel.app/) | Your saved favourite stops, or, with none saved, the stop nearest you |
 
-| Page | Live URL | Question it answers | Where it is used |
-| --- | --- | --- | --- |
-| `/` | [bus-arrival-display.vercel.app](https://bus-arrival-display.vercel.app/) | "When is the next bus?" | The kiosk tablet — glanceable from across the room |
-| `/map` | [bus-arrival-display.vercel.app/map](https://bus-arrival-display.vercel.app/map) | "Where is it right now?" | A phone — imminent buses plotted on a map |
+`/map` is the same page. `/map?stop=<code>` opens one stop, and `/map?stops=<code>,<code>` opens a set of favourites, so any view can be bookmarked or shared.
 
 ## Architecture at a Glance
 
 ```text
-Kiosk / phone browser
+Phone / desktop browser
         │  HTML pages and htmx polling
         ▼
 Vercel serverless function
@@ -23,11 +22,12 @@ Vercel serverless function
         └────────► Bundled bus_stops.json (names and coordinates)
 ```
 
-The browser handles presentation, one-second countdowns, and Leaflet map
-updates. Flask keeps API keys server-side, fetches and normalizes live data, and
+The browser handles presentation, saved favourites (in `localStorage`), and
+Leaflet map updates. Flask keeps API keys server-side, fetches and normalizes live data, and
 returns complete pages or small HTML fragments. The application is stateless:
 configuration comes from environment variables, reference data is bundled as a
-static JSON file, and no database is required.
+static JSON file, favourites stay in each visitor's browser, and no database
+is required.
 
 ## How the App Works
 
@@ -37,26 +37,13 @@ the Jinja templates, CSS, weather icons, and baked bus-stop lookup are bundled
 with the function. There is no database, background worker, or server-side
 session.
 
-### Arrival dashboard
-
-1. A browser loads `/`, which returns the dashboard shell.
-2. htmx immediately requests `/arrivals` and repeats that request every
-   `REFRESH_SECONDS` (20 seconds by default).
-3. Flask calls LTA DataMall's `BusArrival` endpoint once for each configured
-   stop. The API key is added to these server-to-server requests and is never
-   exposed to the browser.
-4. The backend parses up to three arriving vehicles per service, resolves their
-   destinations, applies `BUFFER_SECONDS`, floors the result to whole minutes,
-   and renders the `_arrivals.html` fragment.
-5. Each rendered ETA also carries its absolute arrival timestamp. JavaScript in
-   the browser recalculates the displayed countdown every second, so the number
-   remains current between API polls and after the kiosk wakes from sleep.
-
 ### Map and stop search
 
-1. `/map` performs the initial server-side render, fetches the current NEA
-   weather for the map's focus point (the chosen stop, or home), and loads
-   Leaflet with OneMap tiles.
+1. `/` (or `/map`) with no stop in the URL is the start screen. The browser
+   reads its saved favourites and moves to `/map?stops=<codes>`; with none
+   saved it asks for the phone's location instead (step 6). With a stop or
+   favourites in the URL, the page renders server-side with the NEA weather
+   for the first of them, and loads Leaflet with OneMap tiles.
 2. The page polls `/map-list` every `REFRESH_SECONDS`. That response contains
    both the visible bus rows and data attributes used to create or move map
    markers.
@@ -72,10 +59,11 @@ session.
    no requests. Tapping a sign and choosing **Show buses here** opens the same
    `/map?stop=<code>` as the search box.
 6. If the phone shares its location, a blue dot shows where you are. On the
-   first fix, when no stop was chosen, the position is sent once as a `POST`
+   start screen with no favourites saved (or after tapping **Near me**), the
+   first fix is sent once as a `POST`
    body to `/nearest-stop`, and the page switches to the stop it returns. The
    position never goes into a URL, and later fixes only move the dot.
-7. The home view shows buses within `MAP_WINDOW_MINUTES`; a selected-stop view
+7. The favourites view shows buses within `MAP_WINDOW_MINUTES`; a selected-stop view
    shows everything currently running at that stop. Buses without a live GPS
    fix remain in the list but are not plotted.
 
@@ -90,23 +78,20 @@ session.
   last good copy is reused if a feed fails. These are performance optimizations
   for warm Vercel instances; correctness does not depend on them surviving
   between requests.
-- Dynamic responses use `Cache-Control: no-store` so an old kiosk browser does
+- Dynamic responses use `Cache-Control: no-store` so a browser does
   not reuse stale arrival data.
 - A failed bus-stop request displays that stop as unavailable without hiding
   successful stops. Missing GPS data, weather outages, stale reference data, or
-  unset home coordinates each disable only the feature that needs them rather
-  than taking down the arrival dashboard.
+  a browser that blocks storage or location each disable only the feature
+  that needs them rather than taking down the page.
 
 ## Setup
 
 1. **Get an API key** from LTA DataMall (https://datamall.lta.gov.sg/content/datamall/en.html). Free tier has plenty of quota for polling every 20s.
 2. **Copy `.env.example` to `.env`** and fill in:
    - `API_KEY` — your DataMall key
-   - `BUS_STOP_CODES` — comma-separated stops, e.g. `28571,28519`
-   - `BUS_STOP_NAMES` — display names, e.g. `Home334,Blk425`
    - `REFRESH_SECONDS` — poll interval (default 20, keep it ≥ 10)
    - `BUFFER_SECONDS` — safety margin in seconds (default 30; stacks with flooring, so anything under 1m30s shows "Arr")
-   - `HOME_LAT` / `HOME_LON` — only needed for `/map`; see [Map Page](#map-page)
 3. **Install**: `pip install -r requirements.txt`
 4. **Run locally**: `flask --app api/index run --debug`
 5. **Visit**: http://localhost:5000
@@ -116,62 +101,51 @@ session.
 | Variable          | Default | Notes                                                                                                                                                                   |
 | ----------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `API_KEY`         | —       | Required. LTA DataMall API key. Keep in `.env`, never in git.                                                                                                           |
-| `BUS_STOP_CODES`  | —       | Required. Comma-separated stop codes (e.g. `28571,28519`). Find codes at DataMall or Google Maps.                                                                       |
-| `BUS_STOP_NAMES`  | —       | Optional. Display names for each stop, comma-separated. Falls back to the code itself if missing.                                                                       |
+| `BUS_STOP_CODES`  | —       | Optional. Comma-separated stop codes shown by `/debug` when no `?stop=` is given. Favourites no longer come from here — see [Favourites](#favourites). |
+| `BUS_STOP_NAMES`  | —       | Optional. Display names for `BUS_STOP_CODES`, comma-separated. Falls back to the code itself if missing. |
 | `REFRESH_SECONDS` | 20      | Poll interval in seconds. Doesn't affect how fast the countdown ticks (that's 1s client-side); just how often we fetch fresh data.                                      |
 | `BUFFER_SECONDS`  | 30      | Seconds shaved off every ETA as a safety margin. Combined with floor-rounding, a 30s buffer means anything under 1m30s shows as "Arr" (red, bold). Set to 0 to disable. |
-| `HOME_LAT`        | —       | Required for `/map` only. Latitude the map centres on and distances are measured from. No default — an address does not belong in the repo.                              |
-| `HOME_LON`        | —       | Required for `/map` only. Longitude, as above.                                                                                                                          |
-| `MAP_WINDOW_MINUTES` | 5    | Only buses arriving within this many minutes are pinned on `/map`. Home view only — picking a stop shows everything running there.                                       |
-| `NEARBY_RADIUS_M` | 800     | How far from home the stop picker looks for stops to offer. Needs a `bus_stops.json` carrying coordinates; without one the picker lists only `BUS_STOP_CODES`.           |
+| `MAP_WINDOW_MINUTES` | 5    | Only buses arriving within this many minutes are listed and pinned in the favourites view. Picking a single stop shows everything running there. |
 | `WEATHER_API_KEY` | —       | Optional. `x-api-key` for data.gov.sg. The endpoint works without one; a key only raises the rate limit.                                                                 |
-| `WEATHER_REGION`  | `west`  | Which NEA forecast region you are in: `north`, `south`, `east`, `west`, `central`. Cannot be derived from `HOME_LAT`/`HOME_LON` — the feed ships no boundaries.          |
+| `WEATHER_REGION`  | `west`  | Which NEA forecast region to fall back to when no stop position is known: `north`, `south`, `east`, `west`, `central`. |
 | `WEATHER_TTL_SECONDS` | 900 | How long a fetched forecast is reused before re-fetching.                                                                                                              |
 | `TEMPERATURE_TTL_SECONDS` | 300 | How long the live station temperatures are reused. Shorter than the forecast's: stations report every minute. |
 
-If `HOME_LAT` / `HOME_LON` are unset or unparseable, `/map` says which variables to set and `/` is unaffected — the kiosk display never goes down over a setting only the map needs.
+`HOME_LAT`, `HOME_LON` and `NEARBY_RADIUS_M` from earlier versions are no longer read and can be removed from Vercel.
 
 ## How the ETA is Computed
 
 Two safety mechanisms, both intentional:
 
 1. **Floor, not round**: `int(seconds // 60)` — a bus 1m31s away shows "1 min", not "2 min". The error always lands toward "leave now" rather than "you have time."
-2. **Buffer**: Subtracts `BUFFER_SECONDS` before flooring. A 30s buffer means the tile errs an extra ~30s early. Combined with flooring, this pushes anything under 1m30s to "Arr".
+2. **Buffer**: Subtracts `BUFFER_SECONDS` before flooring. A 30s buffer means the countdown errs an extra ~30s early. Combined with flooring, this pushes anything under 1m30s to "Arr".
 
-The result is deliberately conservative, not "accurate". A tile reading "2 min" means _at least_ 2 minutes — you might leave slightly early, but you won't miss the bus because the display said you had time.
+The result is deliberately conservative, not "accurate". A countdown reading "2 min" means _at least_ 2 minutes — you might leave slightly early, but you won't miss the bus because the display said you had time.
 
-## Client-Side Countdown
+## Reading the Page
 
-The number doesn't freeze between polls. The server sends both a floored minute count (for the initial paint) and an absolute arrival time as epoch milliseconds in a `data-arrival` attribute. JavaScript ticks every second, recomputes the countdown, and updates the text. This is why the display stays fresh even if the htmx poll timer stalls (e.g., when the kiosk screen sleeps).
+Two colours carry the meaning, on the pins and in the list alike — the amber and red of the LED panels at Singapore bus stops:
 
-The client-side buffer (`BUFFER_MS`) is templated in from the server's `BUFFER_SECONDS`, so they stay in sync — no manual alignment needed.
-
-## Reading the Dashboard
-
-Colour is the urgency tier, and it means the same thing on both pages:
-
-| Colour | Meaning         |
-| ------ | --------------- |
+| Colour | Meaning |
+| ------ | ------- |
 | Red    | "Arr" — inside the buffer band |
-| Amber  | 1–5 min         |
-| Green  | 6+ min          |
+| Amber  | On the way |
 
-Within a service, the **next** bus is drawn 1.3× larger and bold at full opacity; the ones behind it sit at 70%. The eye lands on the number that decides whether you leave. The tier is recomputed client-side every second, so a bus ages green → amber → red without waiting for the next poll.
+Colour is never the only signal: an arriving bus also reads **Arr** instead of a number. Each list row is a route plate (the service number, filled with its colour), the destination, then a small line with the stop it is due at (favourites view), its distance, crowding and vehicle type, and the countdown on the right. A line over the map's top-left corner says what the map is showing, including when it is empty ("Nothing in 5 min · next 20 in 9 min"), so an empty map is never a silent one.
 
-In portrait the 2×2 grid collapses to a single scrolling column, so the same page works on a phone as on the tablet.
+The page uses Barlow and Barlow Condensed from Google Fonts — typefaces drawn from road signage — and falls back to system fonts if they cannot load.
 
 ## Destinations
 
 Each bus shows where it is heading — `to Boon Lay Int`, `to Joo Koon Int`. It answers the question a service number alone can't at a stop served in both directions: *is this the one going my way?*
 
-It sits under the service number on `/`, and in the right-hand context column on `/map`. That difference is deliberate: `/map` rows are one grid container each, so a variable-width destination beside the service number would land every row's ETA at a different x and make the list unscannable. The ETA column is pinned so the times share a left edge, and the destination rides with the stop name instead.
+It is the first line beside the route plate. The plate column has a fixed width, so every row's text starts at the same x whatever the service number, and the countdown is pinned to the right edge.
 
 Two more things shape how it renders:
 
 - **Loop services read `Loop`, not a destination.** Services like 334 and 98 report the same code for origin and destination. "to Jurong East Int" would be technically true and practically useless, since that is also where the bus started.
-- **It is deliberately small and grey.** The ETA is still the number you read from across the room; the destination is there for the second glance, once you've already found the service.
 
-The arrival feed names a destination only by bus stop code (`22009`), and the `BusStops` dataset that maps codes to names has no filter-by-code — resolving one destination means paging all ~5,200 stops. Doing that per request, on a serverless cold start, would add seconds to a page the tablet polls every 20s. So the lookup is baked into `data/bus_stops.json` and read once at import. It is a static asset, not a database; the app stays stateless at runtime.
+The arrival feed names a destination only by bus stop code (`22009`), and the `BusStops` dataset that maps codes to names has no filter-by-code — resolving one destination means paging all ~5,200 stops. Doing that per request, on a serverless cold start, would add seconds to a page that polls every 20s. So the lookup is baked into `data/bus_stops.json` and read once at import. It is a static asset, not a database; the app stays stateless at runtime.
 
 **Regenerate it** when a stop gains a service whose destination isn't in the file:
 
@@ -187,7 +161,7 @@ python scripts/fetch_bus_routes.py
 
 It downloads from [sgbusdata](https://github.com/cheeaun/sgbusdata) on GitHub (~550 KB, no DataMall key or calls) and takes a few seconds. Re-run it when routes change; sgbusdata refreshes from LTA on its own schedule, and the file records which update it was baked from. Without the file, pins glide in a straight line instead.
 
-The file holds a name **and position** per stop — `{"name": ..., "lat": ..., "lon": ...}` — since the `BusStops` response carries coordinates in the same rows the names come from. Positions are what let the picker offer nearby stops and measure distance from a selected one.
+The file holds a name **and position** per stop — `{"name": ..., "lat": ..., "lon": ...}` — since the `BusStops` response carries coordinates in the same rows the names come from. Positions are what let the page find the stop nearest you and measure distance from a selected one.
 
 A file predating that change (plain `"Hotel Grand Pacific"` values) is read without complaint; those features simply stay switched off until it is regenerated. The script prints how many stops came back without coordinates — anything other than a small number means the `Latitude`/`Longitude` fields have been renamed upstream.
 
@@ -195,27 +169,22 @@ A stale or missing file degrades rather than breaks: an unknown code falls back 
 
 ## Vehicle Type
 
-DataMall reports whether each bus is single deck, double deck, or bendy. It is deliberately **not** drawn on the tiles — it is a curiosity, not something that changes whether you leave the flat, and the display's job is to survive a glance from across the room. So it stays out of the way until asked for:
-
-- **Hover an ETA on `/`** or a row on `/map` — the browser tooltip names the type.
-- **Tap a bus on `/map`** — the pin's popup lists it alongside distance and crowding.
+DataMall reports whether each bus is single deck, double deck, or bendy. It is a curiosity, not something that changes whether you leave, so it sits at the end of each row's small grey line, and in the pin's popup alongside distance and crowding.
 
 **It is per arrival, not per service.** A service's queued buses are routinely a mix — a double decker followed by two single deckers is the common pattern here — so it could not be a per-service label like the destination.
-
-The popup matters more than the tooltip: `title` tooltips need a mouse, so they never appear on the kiosk tablet or a phone. On touch, the map popup is the only place this surfaces.
 
 `Feature` (`WAB`, wheelchair accessible) is not shown at all — every bus in this feed reports it, so it would mark nothing.
 
 ## Map Page
 
-`/map` answers a different question: not *when* the bus arrives but *where it is now*. Buses arriving within `MAP_WINDOW_MINUTES` are pinned on a [OneMap](https://www.onemap.gov.sg/) layer via Leaflet, each pin labelled with its service number and coloured by the same tiers above. Below the map, the same buses are listed with ETA, distance, stop name and code, destination, and crowding. Tapping a row pans to that bus and opens its pin.
+The page answers *when* and *where* together. Buses are pinned on a [OneMap](https://www.onemap.gov.sg/) layer via Leaflet, each pin a small plate with its service number, coloured as above. In the favourites view only buses arriving within `MAP_WINDOW_MINUTES` are shown; one picked stop shows everything running there. Below the map, the same buses are listed. Tapping a row pans to that bus and opens its pin.
 
 Filtering by **time** rather than by rank is deliberate: a service's second bus appears exactly when it is also imminent, so no "show all / show next" toggle is needed.
 
 Three things worth knowing about the data:
 
 - **Not every bus can be plotted.** DataMall only sends real coordinates when `Monitored` is `1`. On a schedule-derived estimate it sends the string `"0.0"`, which would place the bus in the Atlantic, so those buses are listed but never pinned — a bus two minutes away still matters when it has no GPS fix. The count of them appears under the list.
-- **Distance is straight-line from home, by road from a picked stop.** No route passes the flat, so the home view measures as the crow flies — a bus 400 m away that way can be 2 km by road. Measured from a picked stop, a bus that fits its route quotes the drive (`1.3 km by road`); on live data that ran up to ~25% longer than the straight line.
+- **Distance is measured from the stop each bus is heading to.** A bus that fits its route quotes the drive (`1.3 km by road`); on live data that ran up to ~25% longer than the straight line. In the favourites view every row is measured from its own stop, so the numbers mean the same thing in every row.
 - **Positions are up to ~20s stale.** That is DataMall's publish interval. Between fixes the pins glide towards the stop, paced by LTA's arrival time — see [Gliding pins](#gliding-pins) for what that does and does not claim.
 
 Markers are keyed per vehicle, so a refresh moves a pin rather than rebuilding it — otherwise an open popup would slam shut every poll. The view is framed once on load and never re-fitted, so a refresh cannot yank the map while you are panning it.
@@ -281,27 +250,28 @@ It relies on pins following vehicles rather than ranks (see above); otherwise a 
 
 **What it is and is not.** Nothing is stored: the records live in the tab and reset on reload, so the app stays stateless. That makes it a sample of what you happened to watch, not a statistic — fine for a sense of how far to trust the countdown, not for publishing a number. Expect roughly ±30 s of slop: a fix can be ~20 s old when it arrives, and 100 m is a little before the pole, which is why results are shown in whole minutes. Measuring properly — weeks of records, by stop and time of day — needs somewhere to keep them, and is the prerequisite for ever correcting LTA's estimate rather than just displaying it.
 
+### Favourites
+
+Any stop can be saved with the **Save** button beside its name. Saved stops appear as chips under the search box — **Near me**, **All favourites**, then one chip per stop — and opening the site with favourites saved goes straight to **All favourites**: `/map?stops=<code>,<code>`, every saved stop ringed on the map, and the buses due at any of them in the next `MAP_WINDOW_MINUTES` in one soonest-first list.
+
+- **Kept in the browser, not on the server.** The list lives in `localStorage` under `favouriteStops`. There is no account; the page sends the saved codes in the URL and the server forgets them once it has answered. The list does not follow you to another device, and clearing site data or a private window starts it empty.
+- **Up to six.** Each saved stop costs one DataMall call per poll, so the list is capped at `MAX_FAVOURITES` (6). The calls run in parallel, so six stops take about as long as one.
+- **Nothing saved yet** — a first visit, or someone you sent the link to — falls back to the stop nearest the phone (see [Your location](#your-location)). If location is off, the page says so and puts the search box forward.
+- **Safe to hand-edit.** Codes in `?stops=` are validated as five digits, deduplicated, and capped; anything unreadable in storage is treated as nothing saved.
+
 ### Picking a stop
 
-The picker at the top switches the page to any stop: `/map?stop=28519`.
+The search box reaches **any of the ~5,200 stops** by name or code, and opens `/map?stop=<code>`. Matching happens server-side and returns a dozen results at a time, rather than shipping a quarter of a megabyte of options to a phone on every page load. The choice lives in the URL, so it is per-tab and bookmarkable.
 
-The dropdown holds the quick picks — your configured stops, plus nearby ones once the lookup has coordinates. The search box beside it reaches **any of the ~5,200 stops** by name or code, and works whether or not the lookup has positions: choosing a stop by name never needed one. Matching happens server-side and returns a dozen results at a time, rather than shipping a quarter of a megabyte of options to a phone on every page load.
-
-The selection lives **in the URL**, not on the server. That is deliberate — an environment variable is shared by every page the app serves, so writing the selection back into one would mean tapping the picker on your phone changed what the kiosk tablet displays. It would also not survive: on Vercel each request may be answered by a different instance, so the write would apply to whichever machine happened to catch it. A query parameter is per-tab, bookmarkable, and cannot leak into `/`.
-
-Picking a stop changes what the page means, so the home comparison is dropped entirely:
-
-| | Home view (no selection) | Stop selected |
+| | Favourites | One stop |
 | --- | --- | --- |
-| Question | "Should I leave the flat now?" | "What's coming at this stop?" |
-| Distances measured from | `HOME` | That stop |
+| URL | `/map?stops=<codes>` | `/map?stop=<code>` |
+| Question | "Should I leave now?" | "What's coming at this stop?" |
+| Distances measured from | Each bus's own stop | That stop |
 | Arrival window | `MAP_WINDOW_MINUTES` | None — everything running |
-| Focus pin | Home | The stop |
-| Needs `HOME_LAT`/`HOME_LON` | Yes | **No** |
+| Rings on the map | Every saved stop | The stop |
 
-Distances would be meaningless measured from the flat to a stop across the island, so they come from the selected stop instead — and are omitted entirely if its position cannot be established, which is better than quoting a number from the wrong origin. A bus with no GPS fix still says so; a tracked bus with no reference point simply shows nothing rather than contradicting its own pin.
-
-The focused stop gets a **ring** marker, against the solid dot used for home — same colour, but you can tell at a glance whether the map is centred on where you live or on somewhere you went looking for.
+A distance is omitted if the stop's position cannot be established, which is better than quoting a number from the wrong origin. A bus with no GPS fix still says so; a tracked bus with no reference point simply shows nothing rather than contradicting its own pin.
 
 Positions come from `data/bus_stops.json`. When it has none for the focused stop — an un-regenerated file — one filtered `BusStops` request fills the gap and is remembered for the life of the instance. That fallback is affordable only because the feed now filters by stop code (guide v6.8); asking used to mean paging ~5,000 rows, which is why the file is baked in the first place. It is a safety net, not the plan: a regenerated file skips it entirely. Rows whose code does not match are discarded, since an unsupported filter returns a page of unrelated stops rather than an error, and a pin placed from one of those would be plausible and wrong.
 
@@ -311,11 +281,11 @@ Stop codes from the URL are validated as five digits before being used, so a han
 
 On a phone that shares its location, `/map` shows a blue **you are here** dot, with a faint circle for how sure the phone is, and it moves as you walk. A **You** entry joins the legend once the first position arrives.
 
-If you opened `/map` with no stop chosen, the first position also **picks the stop nearest you**: the page switches to `/map?stop=<code>`, the same bookmarkable view as choosing it by hand. Three things keep that from getting in the way:
+If you opened the site with no favourites saved, or tapped **Near me**, the first position also **picks the stop nearest you**: the page switches to `/map?stop=<code>`, the same bookmarkable view as choosing it by hand. Three things keep that from getting in the way:
 
-- **It only happens when no choice was made.** Picking **Near home** in the dropdown sends `?stop=` (present, but empty), and that is never overridden — the home view stays reachable.
+- **Favourites win.** With stops saved, opening the site goes to them; **Near me** is one tap away.
 - **Only within 2 km of a stop.** Further than that — or outside Singapore — the page stays as it was.
-- **Nothing breaks without it.** Declining the browser's prompt, a device with no location (the kiosk, most desktops), or no connection all leave the page exactly as before. Browsers only offer location on HTTPS or `localhost`, which Vercel provides.
+- **Nothing breaks without it.** Declining the browser's prompt, a device with no location, or no connection leaves the start screen explaining what happened, with a **Try location again** button and the search box ready. Browsers only offer location on HTTPS or `localhost`, which Vercel provides.
 
 **Privacy.** The position is sent once, as a `POST` body to the app's own `/nearest-stop`, which compares it against `data/bus_stops.json` and keeps nothing. It never goes into a URL, so it cannot end up in server logs or browser history; only the chosen stop code does. Later positions only move the dot and never leave the phone.
 
@@ -325,17 +295,17 @@ Leaflet is loaded from a CDN; it is the only dependency beyond Flask, requests, 
 
 From the zoom the page opens at (15) and closer, every bus stop in view is drawn as a small grey **bus stop sign** — a rounded square with a bus on it. Tap one for a popup with its name, code, and a **Show buses here** button, which opens `/map?stop=<code>` — the same view, link, and weather as choosing it in the search box. Zoomed out further, the signs disappear: 5,000 of them would be clutter, and too dense to hit with a finger.
 
-- **One download, then nothing per pan.** `GET /stops.json` returns every stop as `[code, name, lat, lon]` (~230 KB, ~70 KB compressed), built at startup from the same `data/bus_stops.json` as the picker, and cached for a day (`public, max-age=86400`) so Vercel's CDN and the phone answer repeat visits. Each pan or zoom then picks out the stops inside the visible area in the browser — a sub-millisecond scan of 5,000 positions. Asking the server for "stops in this rectangle" instead would cost a request per pan and put the map's position in URLs.
-- **A square, on purpose.** Every other place marker — you, home, the chosen stop — is a circle, so the shape alone says "stop". Grey, so it never competes with the red and yellow buses or the blues.
+- **One download, then nothing per pan.** `GET /stops.json` returns every stop as `[code, name, lat, lon]` (~230 KB, ~70 KB compressed), built at startup from the same `data/bus_stops.json` as the search box, and cached for a day (`public, max-age=86400`) so Vercel's CDN and the phone answer repeat visits. Each pan or zoom then picks out the stops inside the visible area in the browser — a sub-millisecond scan of 5,000 positions. Asking the server for "stops in this rectangle" instead would cost a request per pan and put the map's position in URLs.
+- **A square, on purpose.** Every other place marker — you, and the rings on your stops — is a circle, so the shape alone says "stop". Grey, so it never competes with the red and yellow buses or the blues.
 - **Only the stops in view exist on the page** — typically 10–150 small markers, never all 5,000 — so panning stays smooth on a phone. The sign is drawn 16 px inside an invisible 32 px box, which is its finger-sized tap area.
-- **Never in the way.** Signs live in their own map layer between the roads and Leaflet's markers, so a sign never covers a bus, the blue *you* dot, or the chosen stop — which keeps its own bigger ring and is not drawn twice.
+- **Never in the way.** Signs live in their own map layer between the roads and Leaflet's markers, so a sign never covers a bus, the blue *you* dot, or a ringed stop — which keeps its own bigger ring and is not drawn twice.
 - **Only what changed is redrawn.** Signs that leave the view are removed and new ones added; clearing everything would close an open popup, and opening a popup pans the map to fit it, which would trigger exactly that.
 - **A popup, not an instant switch.** Panning a map on a phone often lands a stray tap; the popup lets you read the name before committing. The button is a real link, so Back returns to the previous stop.
 - **Failure is just no signs.** If `/stops.json` can't load, the map works as before and the search box still finds any stop. The signs are kept out of the Tab order — dozens would sit between the search box and the bus list — so the search box is the keyboard route to the same place.
 
 ## Weather
 
-The `/map` header shows the weather **where the map is looking** instead of a page title — by the time you have opened the page you know what it shows, and what you don't know is whether to take an umbrella to the stop.
+The header shows the weather **where the map is looking** — the chosen stop, or the first favourite — beside the stop's name: the temperature, an icon, and NEA's forecast in a few words. Hover or long-press it for the forecast area.
 
 ```
 Thundery Showers
@@ -344,7 +314,7 @@ Bedok · 31°C now · 25–34°C today
 
 ### Local, not regional
 
-"Where the map is looking" is the chosen stop, or home on the **Near home** view. On a phone that shares its location, the page has already switched to the stop nearest you (see [Your location](#your-location)), so the weather follows the phone **without the phone's position being used for it** — the server already knows the stop's coordinates. Picking a stop by hand shows the weather where you are going.
+"Where the map is looking" is the chosen stop, or the first favourite. On a phone that shares its location, the page has already switched to the stop nearest you (see [Your location](#your-location)), so the weather follows the phone **without the phone's position being used for it** — the server already knows the stop's coordinates. Picking a stop by hand shows the weather where you are going.
 
 Three NEA feeds from data.gov.sg, all free and keyless:
 
@@ -361,7 +331,7 @@ It degrades one layer at a time:
 - **A station that didn't report** in the latest batch is passed over for the next nearest, not shown as blank.
 - **An expired 2-hour forecast** (a feed that stopped updating) is ignored rather than left showing hours-old weather; the condition falls back to the 24-hour regional one, and the layout returns to the original `24–34°C · 6 pm to 6 am`.
 - **A stop with no coordinates** gets the regional forecast, as before this feature.
-- **All three down** gives the plain "Buses near home" title.
+- **All three down** shows no weather at all.
 
 The 2-hour window itself (`10.30 am to 12.30 pm`) is left off the header: at phone width it would push the line onto a second row, and "the next two hours" is what anyone glancing at a bus map assumes.
 
@@ -374,16 +344,16 @@ If NEA ever adds a value, it falls through to no icon rather than a broken image
 Source is [data.gov.sg's real-time API](https://api-open.data.gov.sg/v2/real-time/api/twenty-four-hr-forecast), which wraps NEA's 24-hour forecast. Three things worth knowing:
 
 - **The API key is optional.** The endpoint answers unauthenticated; `x-api-key` only raises the rate limit, and the spec marks it `required: false` with no `security` block. Set `WEATHER_API_KEY` if you have one, leave it blank if not — at one fetch per 15 minutes it makes no difference.
-- **The region can't be derived from `HOME_LAT`/`HOME_LON`.** The feed names five regions but ships no boundaries for them, so `WEATHER_REGION` has to be told which one you are in. It is now only the fallback, used when the 2-hour feed has nothing for the stop. If NEA omits your region for a period, it falls back to the island-wide forecast.
+- **The region can't be derived from a position.** The feed names five regions but ships no boundaries for them, so `WEATHER_REGION` has to be told which one you are in. It is now only the fallback, used when the 2-hour feed has nothing for the stop. If NEA omits your region for a period, it falls back to the island-wide forecast.
 - **It is cached for `WEATHER_TTL_SECONDS`** (default 900). NEA reissues a few times a day, so fetching per page load would spend requests redrawing the same words. The *record* is cached rather than the rendered text, so the period still advances against the clock inside a TTL.
 
-The weather is fetched only on the `/map` page load, never in the `/map-list` poll — the list refreshes every 20s and the forecast does not.
+The weather is fetched only on the page load, never in the `/map-list` poll — the list refreshes every 20s and the forecast does not.
 
-**It cannot take the bus display down.** `read_weather()` returns `None` on any failure — connection error, timeout, HTTP error, malformed payload — rather than raising, and the header falls back to the plain "Buses near home" title. If a forecast was fetched earlier, an outage serves that last good reading instead of nothing. The arrivals page never calls it at all.
+**It cannot take the bus display down.** `read_weather()` returns `None` on any failure — connection error, timeout, HTTP error, malformed payload — rather than raising, and the header simply shows no weather. If a forecast was fetched earlier, an outage serves that last good reading instead of nothing.
 
 ## Debug View
 
-Visit `/arrivals?debug=1` to see per-bus:
+Visit `/debug?stop=<code>` (or `/debug` for the stops in `BUS_STOP_CODES`) to see per-bus:
 
 - Raw `EstimatedArrival` string from DataMall
 - `Monitored` flag (0 = schedule-derived, not live GPS)
@@ -391,7 +361,7 @@ Visit `/arrivals?debug=1` to see per-bus:
 - Resolved destination — a raw code here instead of a name means it is missing from `data/bus_stops.json`
 - Raw `Type` (`SD` / `DD` / `BD`) behind the vehicle icon
 
-**Use case**: if a tile's time looks wildly off, check `Monitored` first. A `0` means DataMall estimated from the timetable, not a vehicle position — it can legitimately differ from a reference app by several minutes, and there's nothing we can do about it.
+**Use case**: if a countdown looks wildly off, check `Monitored` first. A `0` means DataMall estimated from the timetable, not a vehicle position — it can legitimately differ from a reference app by several minutes, and there's nothing we can do about it.
 
 ## Deploy to Vercel
 
@@ -403,26 +373,23 @@ Visit `/arrivals?debug=1` to see per-bus:
    git remote add origin <your-github-url>
    git push -u origin main
    ```
-2. **In Vercel**: Import the repo, set environment variables (`API_KEY`, `BUS_STOP_CODES`, `BUS_STOP_NAMES`, `REFRESH_SECONDS`, `BUFFER_SECONDS`, and — for `/map` — `HOME_LAT`, `HOME_LON`, `MAP_WINDOW_MINUTES`), deploy.
+2. **In Vercel**: Import the repo, set environment variables (`API_KEY`, and optionally `REFRESH_SECONDS`, `BUFFER_SECONDS`, `MAP_WINDOW_MINUTES` and the weather settings), deploy.
 
 **Root Directory must be set to the repo root** so Vercel finds `api/index.py`. `vercel.json` uses an explicit `@vercel/python` build rather than auto-detection, so the function is built reliably and `templates/` and `static/` are bundled with it.
 
-Note: `.env` is gitignored — set env vars in the Vercel dashboard, not the file, so you don't commit secrets. This applies to `HOME_LAT` / `HOME_LON` as much as to `API_KEY`: the repo is public.
+Note: `.env` is gitignored — set env vars in the Vercel dashboard, not the file, so you don't commit secrets: the repo is public.
 
 ## Testing
 
 No formal test suite. To verify the timing logic works:
 
-1. Hit `/arrivals?debug=1` and check that the float minutes in "Exact minutes" match the `EstimatedArrival` timestamp minus the server's current time.
-2. Open `/` and watch a tile for 60+ seconds without refreshing — the number must count itself down on its own, never jump backward when htmx swaps.
-3. Put the tablet to sleep for several minutes, wake it, and check the numbers are correct immediately (not frozen at the pre-sleep value).
-
-For `/map`:
-
-4. Cross-check a pin against `/arrivals?debug=1` — any bus showing `Monitored=0` must appear in the list without a pin, and be counted in the "no GPS fix" note.
+1. Hit `/debug?stop=<code>` and check that the float minutes in "Exact minutes" match the `EstimatedArrival` timestamp minus the server's current time.
+2. Run `python scripts/test_map_views.py` — the start, stop and favourites views, `?stops=` parsing, and the empty-window message, against a canned DataMall answer.
+3. Run `node scripts/test_favourites.js` — reading saved stops, the save/remove toggle, and the six-stop cap.
+4. Cross-check a pin against `/debug?stop=<code>` — any bus showing `Monitored=0` must appear in the list without a pin, and be counted in the "no GPS fix" note.
 5. Leave the page open for a minute. Pins should move without the map flickering or re-centring, and an open popup should survive a refresh.
 6. Tap a row and confirm the map pans to that bus and opens its pin. Rows with no live position should do nothing.
-7. Unset `HOME_LAT` and confirm `/map` explains what to set while `/` still works.
+7. Save two stops, then open `/`: it should go to **All favourites** with both ringed. Remove one with **Saved** and the chips should update at once.
 8. Run `node scripts/test_glide.js` — the pacing rules in `static/glide.js` as plain asserts.
 9. Watch a pin for a minute: it should creep towards its stop between polls, stop ~80 m short, and never move backwards.
 10. Run `node scripts/test_accuracy.js` — the judging rules in `static/accuracy.js`.
@@ -430,8 +397,8 @@ For `/map`:
 12. Run `python scripts/test_route_path.py` — the polyline decoder and route fitting in `api/index.py`, against made-up roads including a loop.
 13. On `/map?stop=<code>`, a tracked bus's distance should read `… by road`, and its pin should follow the road rather than cutting across.
 14. Run `python scripts/test_nearest_stop.py` — picking the nearest stop, and `/nearest-stop` refusing bad input and GET.
-15. On a phone, open `/map` and allow location: the blue dot should appear and the page should switch to your nearest stop. Choosing **Near home** afterwards must stay on the home view.
+15. With nothing saved, open `/` on a phone and allow location: the blue dot should appear and the page should switch to your nearest stop. Deny location instead and the start screen should say so and offer **Try location again**.
 16. Run `python scripts/test_local_weather.py` — nearest area and station, a silent station skipped, and each fallback.
 17. Open `/map?stop=<a stop in the east>` and `/map?stop=<one in the north>`: each header should name a different nearby area (`Bedok · …`, `Woodlands · …`).
-18. Run `python scripts/test_stops_json.py` — the stop list's shape, its day-long caching, and that it matches the picker's lookup.
+18. Run `python scripts/test_stops_json.py` — the stop list's shape, its day-long caching, and that it matches the search box's lookup.
 19. On `/map`, tap a stop sign: the popup should name it, and **Show buses here** should open that stop. Zoom out past 15 and the signs should go.

@@ -2,8 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Buses near home</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1016" />
+    {%- if mode == "stop" %}{% set heading = selected.name %}
+    {%- elif mode == "favourites" %}{% set heading = "Favourites" %}
+    {%- else %}{% set heading = "Nearby" %}{% endif %}
+    <title>{{ heading }} · Bus map</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    {# Barlow: drawn from road and transit signage, so the numbers read like the
+       plates on a bus rather than a dashboard. Condensed for service numbers and
+       countdowns, where width is scarce; regular for everything else. #}
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap"
+    />
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -12,83 +25,72 @@
     <script src="https://unpkg.com/htmx.org@2"></script>
     <script src="{{ url_for('static', filename='glide.js') }}"></script>
     <script src="{{ url_for('static', filename='accuracy.js') }}"></script>
+    <script src="{{ url_for('static', filename='favourites.js') }}"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='map.css') }}" />
+    <script>var MODE = {{ mode | tojson }};</script>
   </head>
-  <body>
-    <header class="map-header">
-      {# The heading stays for screen readers and the tab's outline, but the
-         visible slot goes to the weather: by the time you have opened this
-         page you know what it shows, and what you don't know is whether to
-         take an umbrella to the stop. Falls back to the title when NEA is
-         unreachable, so the header is never empty. #}
-      <h1 class="visually-hidden">Buses near home</h1>
+  <body data-mode="{{ mode }}">
+    <header class="top">
+      <div class="top-title">
+        <p class="eyebrow">
+          {%- if mode == "stop" %}Stop {{ selected.code }}
+          {%- elif mode == "favourites" %}{{ favourites | length }} saved {{ "stop" if favourites | length == 1 else "stops" }}
+          {%- else %}Bus map{% endif -%}
+        </p>
+        <div class="title-row">
+          <h1>{{ heading }}</h1>
+          {% if mode == "stop" %}
+          {# Filled in by Favourites.bindStar: the saved state lives in this
+             browser, so the server cannot know which way to draw it. #}
+          <button
+            type="button"
+            class="star"
+            id="star"
+            aria-pressed="false"
+            data-code="{{ selected.code }}"
+            data-name="{{ selected.name }}"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z" /></svg>
+            <span class="star-label">Save</span>
+          </button>
+          {% endif %}
+        </div>
+      </div>
       {% if weather %}
-      <div class="wx">
+      {# The forecast for where the map is looking. Compact: the page is about
+         buses, and this only answers "do I need an umbrella for the walk". #}
+      <div class="wx" title="{{ weather.text }}{% if weather.area %} · {{ weather.area }}{% endif %}">
         {% if weather.icon %}
-        {# Decorative: the forecast is spelled out immediately beside it, so an
-           alt would only make a screen reader say it twice. #}
         <img
           class="wx-icon"
           src="{{ url_for('static', filename='weather/' ~ weather.icon ~ '.svg') }}"
           alt=""
-          width="46"
-          height="46"
+          width="40"
+          height="40"
         />
         {% endif %}
         <span class="wx-words">
-          <span class="wx-text">{{ weather.text }}</span>
-          {# Local: "Bedok · 31°C now · 25–34°C today" — the area NEA's 2-hour
-             forecast came from (so a surprising forecast can be checked), the
-             nearest station's live reading, then the island's day range. The
-             2-hour window itself is left off: on a phone-width header it would
-             push the line onto two rows, and "the next two hours" is what
-             anyone glancing at a bus map assumes anyway.
-             Regional (no stop position, or the 2-hour feed is down): the
-             original "25–34°C · Midday to 6pm" layout. #}
-          <span class="wx-meta">
-            {%- if weather.area -%}
-            {{ weather.area }}
-            {%- if weather.now is not none %} &middot; {{ weather.now }}&deg;C now{% endif -%}
-            {%- if weather.low is not none and weather.high is not none %} &middot; {{ weather.low }}&ndash;{{ weather.high }}&deg;C today{% endif -%}
-            {%- else -%}
-            {%- if weather.low is not none and weather.high is not none -%}
-            {{ weather.low }}&ndash;{{ weather.high }}&deg;C
-            {%- endif -%}
-            {%- if weather.period %} &middot; {{ weather.period }}{% endif -%}
+          <span class="wx-temp">
+            {%- if weather.now is not none %}{{ weather.now }}&deg;
+            {%- elif weather.high is not none %}{{ weather.high }}&deg;
             {%- endif -%}
           </span>
+          <span class="wx-text">{{ weather.text }}</span>
         </span>
       </div>
-      {% else %}
-      <span class="wx" aria-hidden="true">Buses near home</span>
       {% endif %}
-      <a class="map-back" href="/">Arrivals</a>
     </header>
 
-    {# A plain GET form: the selection belongs in the URL, so it survives a
-       reload, can be bookmarked, and never becomes server state that the
-       kiosk could pick up. Submits on change, and still works without JS. #}
-    <form class="stop-picker" method="get" action="/map">
-      <select name="stop" aria-label="Which stop to focus on">
-        <option value="">Near home</option>
-        {% for option in options %}
-        <option value="{{ option.code }}" {{ 'selected' if selected and selected.code == option.code }}>
-          {{ option.name }} ({{ option.code }}){% if option.away %} &middot; {{ option.away }}{% endif %}
-        </option>
-        {% endfor %}
-      </select>
-      <noscript><button type="submit">Show</button></noscript>
-    </form>
-
-    {# Outside the form above, so typing can never submit it. Searches names
-       rather than listing all 5000 stops, which would be a quarter of a
-       megabyte of markup on every page load. #}
+    {# Outside any form, so typing can never submit one. Searches names rather
+       than listing all 5000 stops, which would be a quarter of a megabyte. #}
     <div class="stop-search">
+      <label class="visually-hidden" for="stop-q">Search any bus stop by name or code</label>
+      <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></svg>
       <input
+        id="stop-q"
         type="search"
         name="q"
-        placeholder="Search any stop by name or code"
-        aria-label="Search any bus stop by name or code"
+        placeholder="Search a stop name or 5-digit code"
         autocomplete="off"
         hx-get="/stops"
         hx-trigger="input changed delay:250ms, search"
@@ -96,33 +98,47 @@
       />
       <div id="stop-results"></div>
     </div>
-    <script>
-      // Outside the map's script block on purpose: the picker has to work even
-      // when HOME is unconfigured and no map is drawn.
-      document.querySelector(".stop-picker select").addEventListener(
-        "change",
-        function () {
-          this.form.submit();
-        }
-      );
-    </script>
 
-    {% if not home_missing or mode == "stop" %}
-    <div id="map" class="map-frame"></div>
+    {# Built by Favourites.renderChips from this browser's saved stops, plus
+       "Near me". A row that scrolls sideways, so six saved stops never push
+       the map off a phone screen. #}
+    <nav class="chips" id="chips" aria-label="Your stops"
+         data-current-stop="{{ selected.code if selected else '' }}"
+         data-mode="{{ mode }}"></nav>
+
+    {% if mode == "start" %}
+    {# The no-favourites first visit. Favourites.start() either moves on to the
+       saved stops or asks the phone where it is; this panel says which, and
+       becomes the way forward if location is off. #}
+    <section class="start" id="start" aria-live="polite">
+      <p class="start-title" id="start-title">Finding the stop nearest you&hellip;</p>
+      <p class="start-body" id="start-body">Allow location to see buses on their way to it.</p>
+      <button type="button" class="btn" id="start-retry" hidden>Try location again</button>
+    </section>
     {% endif %}
 
+    <div class="map-wrap">
+      <div id="map" class="map-frame"></div>
+      {# One line over the map saying what it shows, so an empty map is never
+         a silent one. Copied in from the list after every poll. #}
+      <p class="map-status" id="map-status" aria-live="polite" hidden></p>
+    </div>
+
+    {% if mode != "start" %}
     <!-- No "load" trigger: the first render is already server-side, so the page
          costs one API call rather than two. -->
     <div
       id="bus-list"
-      hx-get="/map-list{{ '?stop=' ~ selected.code if selected }}"
+      hx-get="/map-list?{{ request.query_string.decode() }}"
       hx-trigger="every {{ refresh_seconds }}s, refresh"
       hx-swap="innerHTML"
     >
       {% include "_map_list.html" %}
     </div>
+    {% else %}
+    <div id="bus-list"></div>
+    {% endif %}
 
-    {% if not home_missing or mode == "stop" %}
     {# Filled by renderAccuracy() below, and only once a bus has actually
        reached its stop while the page was open. Outside #bus-list so the
        20s htmx swap cannot wipe it. Hidden until there is something to say. #}
@@ -131,27 +147,33 @@
       <p class="accuracy-summary"></p>
       <ul class="accuracy-list"></ul>
     </section>
-    {% endif %}
 
-    <p class="map-legend">
-      <span class="dot arriving"></span> Arriving
-      <span class="dot soon"></span> {% if window_minutes %}Within {{ window_minutes }} min{% else %}Due{% endif %}
-      {% if show_focus_pin %}
-      <span class="dot {{ 'stop' if selected else 'home' }}"></span>
-      {{ selected.name if selected else "Home" }}
-      {% endif %}
-      <span class="dot pick"></span> Tap a stop to choose it
+    <footer class="legend">
+      <span><span class="key arriving"></span>Arriving</span>
+      <span><span class="key soon"></span>On the way</span>
+      <span><span class="key place"></span>{{ "Your stops" if mode == "favourites" else "This stop" }}</span>
+      <span><span class="key pick"></span>Tap a stop</span>
       {# Shown by startLocating() once the phone has given a position. #}
-      <span id="legend-you" hidden><span class="dot you"></span> You</span>
-    </p>
+      <span id="legend-you" hidden><span class="key you"></span>You</span>
+    </footer>
 
-    {% if not home_missing or mode == "stop" %}
     <script>
-      // Null when a picked stop predates coordinates in the lookup; the map
-      // then frames the buses themselves, which carry their own positions.
-      var FOCUS = {% if focus_lat is not none %}[{{ focus_lat }}, {{ focus_lon }}]{% else %}null{% endif %};
+      // The stops this view is about: the picked one, or every favourite.
+      // Each gets a ring; the map opens framed on them (and then on the buses
+      // once the first poll lands). Empty on the start screen, which shows the
+      // whole island until the phone says where it is.
+      var PLACES = {{ places | tojson }};
+      var PLACE_POINTS = PLACES.map(function (p) { return L.latLng(p.lat, p.lon); });
 
-      var map = L.map("map", { zoomControl: true }).setView(FOCUS || [1.3521, 103.8198], 15);
+      var map = L.map("map", { zoomControl: false });
+      L.control.zoom({ position: "bottomright" }).addTo(map);
+      if (PLACE_POINTS.length > 1) {
+        map.fitBounds(L.latLngBounds(PLACE_POINTS), { padding: [40, 40], maxZoom: 16 });
+      } else if (PLACE_POINTS.length) {
+        map.setView(PLACE_POINTS[0], 16);
+      } else {
+        map.setView([1.3521, 103.8198], 12);
+      }
 
       L.tileLayer("https://www.onemap.gov.sg/maps/tiles/Night/{z}/{x}/{y}.png", {
         minZoom: 11,
@@ -164,21 +186,16 @@
           '<a href="https://www.sla.gov.sg/">Singapore Land Authority</a>',
       }).addTo(map);
 
-      {% if show_focus_pin %}
-      {# A ring for a stop, a solid dot for home: same colour family, but you
-         can tell at a glance whether the map is centred on where you live or
-         on a stop you went looking for. #}
-      L.marker(FOCUS, {
-        icon: L.divIcon({
-          className: {{ ("stop-pin" if selected else "home-pin") | tojson }},
-          html: "",
-          iconSize: [{{ 20 if selected else 16 }}, {{ 20 if selected else 16 }}],
-        }),
-        zIndexOffset: 1000,
-      })
-        .addTo(map)
-        .bindPopup({{ (selected.name ~ " (" ~ selected.code ~ ")" if selected else "Home") | tojson }});
-      {% endif %}
+      // A ring per stop in view: a place on the map, never mistaken for a bus.
+      PLACES.forEach(function (p, i) {
+        L.marker(PLACE_POINTS[i], {
+          icon: L.divIcon({ className: "stop-pin", html: "", iconSize: [20, 20] }),
+          zIndexOffset: 1000,
+          title: p.name,
+        })
+          .addTo(map)
+          .bindPopup(stopPopup([p.code, p.name, p.lat, p.lon], true));
+      });
 
       // ---- Tappable stops ------------------------------------------------
       // Every bus stop in view, as a small "bus stop sign" you can tap to
@@ -189,9 +206,10 @@
       // Only from street zoom: island-wide, 5000 signs are clutter and too
       // dense to hit with a finger. 15 is the zoom the page opens at.
       var STOPS_MIN_ZOOM = 15;
-      // The stop being viewed keeps its own bigger ring; don't draw it twice.
-      var SELECTED_CODE = {{ (selected.code if selected else "") | tojson }};
-      // A square, not a circle: every other place marker here — you, home,
+      // The stops being viewed keep their own bigger ring; don't draw them twice.
+      var PLACE_CODES = {};
+      PLACES.forEach(function (p) { PLACE_CODES[p.code] = true; });
+      // A square, not a circle: every other place marker here — you and
       // the chosen stop — is round, so the shape alone says "stop". Grey so
       // it never competes with the red/yellow buses or the blues.
       //
@@ -218,7 +236,7 @@
 
       // Popup body built from DOM nodes, not an HTML string: stop names come
       // from LTA's data, and textContent can't be tricked into markup.
-      function stopPopup(stop) {
+      function stopPopup(stop, here) {
         var box = document.createElement("div");
         var name = document.createElement("strong");
         name.textContent = stop[1];
@@ -231,7 +249,9 @@
         go.className = "stop-go";
         go.href = "/map?stop=" + encodeURIComponent(stop[0]);
         go.textContent = "Show buses here";
-        box.append(name, code, go);
+        box.append(name, code);
+        // A ring that is already the stop on screen needs no "go" button.
+        if (!here || MODE === "favourites") box.append(go);
         return box;
       }
 
@@ -241,7 +261,7 @@
           // A margin beyond the edges, so a short pan doesn't reveal blanks.
           var view = map.getBounds().pad(0.2);
           allStops.forEach(function (stop) {
-            if (stop[0] !== SELECTED_CODE && view.contains([stop[2], stop[3]])) {
+            if (!PLACE_CODES[stop[0]] && view.contains([stop[2], stop[3]])) {
               wanted[stop[0]] = stop;
             }
           });
@@ -398,7 +418,7 @@
 
       function syncMarkers() {
         var rows = document.querySelectorAll("#bus-list .bus-row[data-lat]");
-        var points = FOCUS ? [FOCUS] : [];
+        var points = PLACE_POINTS.slice();
         var now = Date.now();
 
         // Last poll's markers, grouped by "stop|service", waiting to be
@@ -466,9 +486,20 @@
           for (var j = 0; j < spare[g].length; j++) map.removeLayer(spare[g][j]);
         }
 
+        // The one-line summary over the map, from the list just swapped in.
+        var status = document.querySelector("#bus-list [data-status]");
+        var pill = document.getElementById("map-status");
+        if (status) {
+          pill.textContent = status.getAttribute("data-status");
+          pill.className = "map-status " + (status.getAttribute("data-tone") || "");
+          pill.hidden = false;
+        } else {
+          pill.hidden = true;
+        }
+
         // Frame everything once. Re-fitting on each poll would yank the map back
         // every 10 seconds and fight any panning.
-        if (!fitted && points.length > (FOCUS ? 1 : 0)) {
+        if (!fitted && points.length > PLACE_POINTS.length) {
           map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 17 });
           fitted = true;
         }
@@ -586,59 +617,72 @@
         if (!document.hidden) htmx.trigger("#bus-list", "refresh");
       });
     </script>
-    {% endif %}
 
     <script>
-      // The phone's own position, when the device has one and the user allows
-      // it: a "you are here" dot on the map and, if no stop was asked for, a
-      // switch to the stop nearest you. Kept outside the map's script block:
-      // the switch is useful even where no map is drawn (HOME_LAT unset).
-      //
-      // Only the first fix picks a stop; later fixes just move the dot as you
-      // walk. Declining the prompt, or a device with no location (the kiosk,
-      // most desktops), leaves the page exactly as it was.
+      // The phone's own position, when it has one and the user allows it: a
+      // "you are here" dot on the map, and on the start screen the switch to
+      // the stop nearest you. Later fixes only move the dot as you walk.
       //
       // Privacy: the position is sent once, in a POST body, to this app's own
       // /nearest-stop, which keeps nothing. It never goes in a URL.
-      var AUTO_LOCATE = {{ "true" if auto_locate else "false" }};
 
-      function startLocating() {
-        if (!navigator.geolocation) return;
+      function startScreen(title, body, retry) {
+        var box = document.getElementById("start");
+        if (!box) return;
+        document.getElementById("start-title").textContent = title;
+        document.getElementById("start-body").textContent = body;
+        document.getElementById("start-retry").hidden = !retry;
+      }
+
+      function startLocating(pickStop) {
+        if (!navigator.geolocation) {
+          if (pickStop) startScreen("This browser can't share a location", "Search for a stop above to see its buses.", false);
+          return;
+        }
         var picked = false;
         var you = null; // the dot
         var spread = null; // the circle showing how sure the phone is
         navigator.geolocation.watchPosition(
           function (pos) {
             var here = [pos.coords.latitude, pos.coords.longitude];
-            if (typeof map !== "undefined") {
-              if (!you) {
-                spread = L.circle(here, {
-                  radius: pos.coords.accuracy,
-                  color: "#4d8dff",
-                  weight: 1,
-                  fillOpacity: 0.08,
-                  interactive: false,
-                }).addTo(map);
-                you = L.marker(here, {
-                  icon: L.divIcon({ className: "you-pin", html: "", iconSize: [14, 14] }),
-                  zIndexOffset: 900, // above buses, below the focused stop
-                  keyboard: false,
-                })
-                  .addTo(map)
-                  .bindPopup("You are here");
-                var legend = document.getElementById("legend-you");
-                if (legend) legend.hidden = false;
-              } else {
-                you.setLatLng(here);
-                spread.setLatLng(here).setRadius(pos.coords.accuracy);
-              }
+            if (!you) {
+              spread = L.circle(here, {
+                radius: pos.coords.accuracy,
+                color: "#5b9dff",
+                weight: 1,
+                fillOpacity: 0.08,
+                interactive: false,
+              }).addTo(map);
+              you = L.marker(here, {
+                icon: L.divIcon({ className: "you-pin", html: "", iconSize: [14, 14] }),
+                zIndexOffset: 900, // above buses, below the focused stop
+                keyboard: false,
+              })
+                .addTo(map)
+                .bindPopup("You are here");
+              document.getElementById("legend-you").hidden = false;
+            } else {
+              you.setLatLng(here);
+              spread.setLatLng(here).setRadius(pos.coords.accuracy);
             }
-            if (AUTO_LOCATE && !picked) {
+            if (pickStop && !picked) {
               picked = true;
               pickNearestStop(here);
             }
           },
-          function () {}, // declined or unavailable: nothing to do
+          function (error) {
+            if (!pickStop || picked) return;
+            // 1 is PERMISSION_DENIED; the rest are "the phone couldn't tell".
+            if (error.code === 1) {
+              startScreen(
+                "Location is off for this site",
+                "Search for a stop above, or turn location on in your browser's site settings and try again.",
+                true
+              );
+            } else {
+              startScreen("Couldn't find where you are", "Search for a stop above, or try again.", true);
+            }
+          },
           // maximumAge lets a phone answer at once from a fix it already has.
           { enableHighAccuracy: true, maximumAge: 30000, timeout: 20000 }
         );
@@ -654,16 +698,33 @@
             return response.ok ? response.json() : null;
           })
           .then(function (data) {
-            // No stop within 2 km (or not in Singapore): stay put.
-            if (!data || !data.stop) return;
+            if (!data || !data.stop) {
+              startScreen("No bus stop within 2 km", "Search for a stop above to see its buses.", false);
+              return;
+            }
             // replace(), not a normal navigation: Back should not return to a
-            // page that would immediately switch again.
-            location.replace("/map?stop=" + encodeURIComponent(data.stop.code));
+            // page that would immediately switch again. near=1 keeps the
+            // "Near me" chip lit on the stop it found.
+            location.replace("/map?stop=" + encodeURIComponent(data.stop.code) + "&near=1");
           })
-          .catch(function () {}); // offline: the page still works without it
+          .catch(function () {
+            startScreen("You seem to be offline", "Check your connection and try again.", true);
+          });
       }
 
-      startLocating();
+      // The start screen: saved favourites win, unless "Near me" was asked
+      // for. Otherwise the phone's location picks a stop.
+      var saved = Favourites.load();
+      var wantsNear = /[?&]near=1/.test(location.search);
+      if (MODE === "start" && saved.length && !wantsNear) {
+        location.replace(Favourites.url(saved));
+      } else {
+        Favourites.renderChips();
+        Favourites.bindStar();
+        startLocating(MODE === "start");
+        var retry = document.getElementById("start-retry");
+        if (retry) retry.addEventListener("click", function () { location.reload(); });
+      }
     </script>
   </body>
 </html>

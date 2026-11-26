@@ -3,6 +3,7 @@ import json
 import math
 import os
 import pathlib
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -27,30 +28,13 @@ REFRESH_SECONDS = int(os.environ.get("REFRESH_SECONDS", "20"))
 # Combined with flooring, 30 here means anything under 1m30s shows as "Arr".
 BUFFER_SECONDS = int(os.environ.get("BUFFER_SECONDS", "30"))
 
-def read_home() -> tuple[float, float] | None:
-    """Home coordinates, or None when unset.
-
-    No default: a home address does not belong in a public repository. Returning
-    None rather than raising keeps a missing value contained to /map — every
-    route lives in this one module, so raising here would take the arrivals
-    display down with it.
-    """
-    lat, lon = os.environ.get("HOME_LAT"), os.environ.get("HOME_LON")
-    if not lat or not lon:
-        return None
-    try:
-        return float(lat), float(lon)
-    except ValueError:
-        return None
-
-
-HOME = read_home()
-# Only buses arriving within this many minutes get plotted. The map answers
-# "should I leave now", so anything further out is noise.
+# In the favourites view, only buses arriving within this many minutes get
+# plotted. That view answers "should I leave now", so anything further out is
+# noise. A single picked stop shows everything running there.
 MAP_WINDOW_MINUTES = int(os.environ.get("MAP_WINDOW_MINUTES", "5"))
-# How far out the stop picker looks for stops worth offering.
-NEARBY_RADIUS_M = int(os.environ.get("NEARBY_RADIUS_M", "800"))
-NEARBY_LIMIT = 12
+# Favourites live in each visitor's browser and arrive as ?stops=. Every one
+# costs a DataMall call per poll, so the list is capped.
+MAX_FAVOURITES = 6
 
 LOAD_LABELS = {"SEA": "Seats", "SDA": "Standing", "LSD": "Limited"}
 TYPE_LABELS = {"SD": "Single deck", "DD": "Double deck", "BD": "Bendy"}
@@ -63,7 +47,7 @@ WEATHER_URL = (
 # higher rate limit, so an unset key costs nothing at this polling volume.
 WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY")
 # One of north/south/east/west/central. The feed ships no region boundaries, so
-# this can't be derived from HOME — it has to be told which one you're in.
+# this cannot be worked out from a position — it has to be told.
 WEATHER_REGION = os.environ.get("WEATHER_REGION", "west").strip().lower()
 # NEA reissues this a few times a day, so fetching per page load buys nothing
 # and adds latency. A warm serverless instance keeps the cache; a cold one
@@ -414,15 +398,17 @@ def destination_label(next_bus: dict) -> str | None:
         return "Loop"
     return f"to {stop_name(destination)}"
 
-stop_codes = os.environ["BUS_STOP_CODES"].split(",")
+# Optional, and only read by the /debug view: favourites now live in each
+# visitor's browser rather than in the deployment's settings.
+stop_codes = [c.strip() for c in os.environ.get("BUS_STOP_CODES", "").split(",") if c.strip()]
 stop_names = os.environ.get("BUS_STOP_NAMES", "").split(",")
 # Pair each stop code with a display name, falling back to the code itself.
 STOPS = [
     (
-        code.strip(),
+        code,
         stop_names[i].strip()
         if i < len(stop_names) and stop_names[i].strip()
-        else code.strip(),
+        else code,
     )
     for i, code in enumerate(stop_codes)
 ]
@@ -647,31 +633,6 @@ def format_distance(metres: float) -> str:
     return f"{metres / 1000:.1f} km"
 
 
-def find_nearby_stops() -> list[dict]:
-    """Stops within NEARBY_RADIUS_M of home, nearest first.
-
-    Computed once at import: both inputs are import-time constants, and scanning
-    5000 stops per request to produce an unchanging list would be waste. Empty
-    until data/bus_stops.json is regenerated with coordinates.
-    """
-    if HOME is None:
-        return []
-    found = []
-    for code, entry in BUS_STOPS.items():
-        position = baked_position(code)
-        if position is None:
-            continue
-        metres = haversine_m(*HOME, *position)
-        if metres <= NEARBY_RADIUS_M:
-            found.append(
-                {"code": code, "name": entry["name"], "away": format_distance(metres)}
-            )
-    found.sort(key=lambda stop: stop["code"])
-    return found[:NEARBY_LIMIT]
-
-
-NEARBY_STOPS = find_nearby_stops()
-
 # A phone further than this from every stop is not near a bus in any useful
 # sense (or is not in Singapore at all): no stop is picked and /map stays as it
 # was. Generous, because the nearest stop is still the most useful pick from a
@@ -703,12 +664,22 @@ def valid_stop_code(code: str | None) -> str | None:
     """A stop code safe to query and print, or None.
 
     Singapore codes are five digits. Anything else came from a hand-edited URL,
-    so it is dropped and the page falls back to the home view rather than
-    forwarding junk to DataMall.
+    so it is dropped rather than forwarded to DataMall.
     """
     if code and len(code) == 5 and code.isdigit():
         return code
     return None
+
+
+def valid_stop_codes(raw: str | None) -> list[str]:
+    """Favourites from ?stops=11119,04223 — valid codes only, deduplicated,
+    in the order given, at most MAX_FAVOURITES."""
+    codes = []
+    for part in (raw or "").split(","):
+        code = valid_stop_code(part.strip())
+        if code and code not in codes:
+            codes.append(code)
+    return codes[:MAX_FAVOURITES]
 
 
 def search_stops(query: str | None, limit: int = 12) -> list[dict]:
@@ -736,25 +707,6 @@ def search_stops(query: str | None, limit: int = 12) -> list[dict]:
         hits.append((rank, name, code))
     hits.sort()
     return [{"code": code, "name": name} for _, name, code in hits[:limit]]
-
-
-def picker_options(selected_code: str | None) -> list[dict]:
-    """Stops offered in the picker: the configured ones, then whatever is near.
-
-    A selected stop that is neither is appended, so arriving by a hand-typed URL
-    still shows the picker pointing at where you actually are.
-    """
-    options = [{"code": code, "name": name, "away": None} for code, name in STOPS]
-    seen = {option["code"] for option in options}
-    for stop in NEARBY_STOPS:
-        if stop["code"] not in seen:
-            options.append(stop)
-            seen.add(stop["code"])
-    if selected_code and selected_code not in seen:
-        options.append(
-            {"code": selected_code, "name": stop_name(selected_code), "away": None}
-        )
-    return options
 
 
 def get_bus_arrival(
@@ -816,19 +768,27 @@ def get_bus_arrival(
     return results
 
 
-def fetch_stops(now: datetime) -> list[dict]:
-    stops_data = []
-    for code, name in STOPS:
+def fetch_stops(now: datetime, stops: list[tuple[str, str]]) -> list[dict]:
+    """[(code, name), ...] -> each stop's services, fetched in parallel.
+
+    One DataMall call per stop; side by side, six favourites cost about as long
+    as one instead of six in a row.
+    """
+
+    def one(stop: tuple[str, str]) -> dict:
+        code, name = stop
         try:
             services = get_bus_arrival(API_KEY, code, now)
             error = None
         except requests.RequestException:
             services = []
             error = "Unavailable"
-        stops_data.append(
-            {"code": code, "name": name, "services": services, "error": error}
-        )
-    return stops_data
+        return {"code": code, "name": name, "services": services, "error": error}
+
+    if not stops:
+        return []
+    with ThreadPoolExecutor(max_workers=len(stops)) as pool:
+        return list(pool.map(one, stops))
 
 
 def collect_map_buses(
@@ -904,121 +864,116 @@ def eta_label(minutes: int) -> str:
     return "Arr" if minutes == 0 else f"{minutes} min"
 
 
-def stop_context(now: datetime, code: str) -> dict:
-    """The view when a stop has been picked: everything due there, and nothing
-    measured from home.
-
-    Home is not the reference point any more, so its distances would be
-    meaningless — a stop across the island is not "3 km away" in any sense that
-    helps. Distances are taken from the stop instead, and omitted entirely while
-    the lookup has no coordinates for it. The arrival window goes too: it exists
-    to answer "leave now", which is not the question being asked here.
-    """
-    try:
-        services = get_bus_arrival(API_KEY, code, now)
-        error = None
-    except requests.RequestException:
-        services = []
-        error = "Unavailable"
-    stops_data = [
-        {"code": code, "name": stop_name(code), "services": services, "error": error}
-    ]
-    origin = stop_position(code)
-    buses = collect_map_buses(stops_data, origin)
+def base_context(now: datetime) -> dict:
+    """Keys every view of /map shares, so the template never trips on a gap."""
     return {
-        "mode": "stop",
-        "selected": {"code": code, "name": stop_name(code)},
-        "options": picker_options(code),
-        "near": buses,
+        "mode": "start",
+        "selected": None,
+        "favourites": [],
+        "near": [],
         "later": [],
-        "untracked": [bus for bus in buses if bus["lat"] is None],
-        "focus_lat": origin[0] if origin else None,
-        "focus_lon": origin[1] if origin else None,
-        "show_focus_pin": origin is not None,
+        "untracked": [],
+        "places": [],
+        "focus_lat": None,
+        "focus_lon": None,
         "window_minutes": None,
         "updated_at": now.strftime("%H:%M:%S"),
-        "home_missing": False,
     }
 
 
-def home_context(now: datetime) -> dict:
-    buses = collect_map_buses(fetch_stops(now), HOME)
-    near = [bus for bus in buses if bus["minutes"] <= MAP_WINDOW_MINUTES]
+def place_of(code: str) -> dict | None:
+    """A stop as a map marker: {code, name, lat, lon}, or None without a position."""
+    position = stop_position(code)
+    if position is None:
+        return None
+    return {"code": code, "name": stop_name(code), "lat": position[0], "lon": position[1]}
+
+
+def stop_context(now: datetime, code: str) -> dict:
+    """One picked stop: everything running there, distances measured from it.
+
+    The arrival window goes: it exists to answer "leave now" across several
+    stops, which is not the question when you have gone looking for one.
+    """
+    stops_data = fetch_stops(now, [(code, stop_name(code))])
+    origin = stop_position(code)
+    buses = collect_map_buses(stops_data, origin)
+    place = place_of(code)
     return {
-        "mode": "home",
-        "selected": None,
-        "options": picker_options(None),
+        **base_context(now),
+        "mode": "stop",
+        "selected": {"code": code, "name": stop_name(code)},
+        "near": buses,
+        "untracked": [bus for bus in buses if bus["lat"] is None],
+        "places": [place] if place else [],
+        "focus_lat": origin[0] if origin else None,
+        "focus_lon": origin[1] if origin else None,
+    }
+
+
+def favourites_context(now: datetime, codes: list[str]) -> dict:
+    """The visitor's saved stops, together: what is due at any of them soon.
+
+    Each bus is measured from the stop it is heading to (by road where its
+    route fits), so "600 m by road" means the same thing in every row whichever
+    favourite it belongs to.
+    """
+    stops_data = fetch_stops(now, [(code, stop_name(code)) for code in codes])
+    buses = []
+    for stop in stops_data:
+        buses.extend(collect_map_buses([stop], stop_position(stop["code"])))
+    buses.sort(key=lambda bus: bus["minutes"])
+    near = [bus for bus in buses if bus["minutes"] <= MAP_WINDOW_MINUTES]
+    places = [p for p in (place_of(code) for code in codes) if p]
+    first = places[0] if places else None
+    return {
+        **base_context(now),
+        "mode": "favourites",
+        "favourites": [{"code": code, "name": stop_name(code)} for code in codes],
         "near": near,
         "later": [bus for bus in buses if bus["minutes"] > MAP_WINDOW_MINUTES][:3],
         "untracked": [bus for bus in near if bus["lat"] is None],
-        "focus_lat": HOME[0],
-        "focus_lon": HOME[1],
-        "show_focus_pin": True,
+        "places": places,
+        # Weather is taken from the first favourite; the map frames them all.
+        "focus_lat": first["lat"] if first else None,
+        "focus_lon": first["lon"] if first else None,
         "window_minutes": MAP_WINDOW_MINUTES,
-        "updated_at": now.strftime("%H:%M:%S"),
-        "home_missing": False,
     }
 
 
-def map_context(now: datetime, selected_code: str | None = None) -> dict:
-    code = valid_stop_code(selected_code)
+def map_context(now: datetime, args) -> dict:
+    """?stop= wins over ?stops=; neither is the start screen, where the browser
+    decides between its saved favourites and the stop nearest the phone."""
+    code = valid_stop_code(args.get("stop"))
     if code:
-        # Nothing in this path reads HOME, so the picker keeps working even when
-        # the flat's coordinates were never configured.
         return stop_context(now, code)
-    if HOME is None:
-        return {
-            "home_missing": True,
-            "mode": "home",
-            "selected": None,
-            "options": picker_options(None),
-            "near": [],
-            "later": [],
-            "untracked": [],
-            "focus_lat": None,
-            "focus_lon": None,
-            "show_focus_pin": False,
-            "window_minutes": MAP_WINDOW_MINUTES,
-            "updated_at": now.strftime("%H:%M:%S"),
-        }
-    return home_context(now)
+    codes = valid_stop_codes(args.get("stops"))
+    if codes:
+        return favourites_context(now, codes)
+    return base_context(now)
 
 
 @app.route("/")
-def index():
-    return render_template(
-        "index.html",
-        refresh_seconds=REFRESH_SECONDS,
-        buffer_seconds=BUFFER_SECONDS,
-    )
-
-
 @app.route("/map")
 def bus_map():
     now = datetime.now(SGT)
-    # Only on the page load, not on /map-list: the list polls every 20s and the
-    # forecast changes a few times a day, so putting it in the poll would spend
-    # a request an hour to redraw the same words.
-    context = map_context(now, request.args.get("stop"))
-    # Weather for where the map is looking: the chosen stop (on a phone, the
-    # one nearest it) or home. None when that stop has no coordinates, which
-    # falls back to the regional forecast.
+    context = map_context(now, request.args)
+    # Weather only on the page load, not in the 20s poll: the forecast changes
+    # a few times a day. Taken where the map is looking; regional without one.
     focus = context["focus_lat"], context["focus_lon"]
     place = focus if None not in focus else None
     response = make_response(
         render_template(
             "map.html",
             refresh_seconds=REFRESH_SECONDS,
+            max_favourites=MAX_FAVOURITES,
             weather=read_weather(now, place),
-            # Only when no stop was asked for at all. Picking "Near home" in
-            # the picker submits ?stop= (present but empty) and must stay on
-            # the home view rather than be overridden by the phone's location.
-            auto_locate="stop" not in request.args,
             **context,
         )
     )
     response.headers["Cache-Control"] = "no-store"
     return response
+
 
 
 @app.route("/nearest-stop", methods=["POST"])
@@ -1083,33 +1038,30 @@ def stop_list():
 
 @app.route("/map-list")
 def map_list():
-    # The selection rides in the query string rather than being stored: it is a
-    # property of the tab you are looking at, not of the app. The kiosk never
-    # sends one, so nothing here can change what the tablet displays.
+    # The view rides in the query string rather than being stored: it belongs
+    # to the tab you are looking at, not to the app.
     now = datetime.now(SGT)
     response = make_response(
-        render_template("_map_list.html", **map_context(now, request.args.get("stop")))
+        render_template("_map_list.html", **map_context(now, request.args))
     )
     response.headers["Cache-Control"] = "no-store"
     return response
 
 
-@app.route("/arrivals")
-def arrivals():
-    # One snapshot for the whole request, so every tile is measured against the
-    # same instant and the debug view shows the exact value used.
+@app.route("/debug")
+def debug():
+    """Raw feed values for one stop (?stop=) or the BUS_STOP_CODES setting."""
     now = datetime.now(SGT)
-    stops_data = fetch_stops(now)
-    template = "_debug.html" if request.args.get("debug") else "_arrivals.html"
+    code = valid_stop_code(request.args.get("stop"))
+    stops = [(code, stop_name(code))] if code else STOPS
     response = make_response(
         render_template(
-            template,
-            stops=stops_data,
+            "_debug.html",
+            stops=fetch_stops(now, stops),
             updated_at=now.strftime("%H:%M:%S"),
             now=now.isoformat(),
             buffer_seconds=BUFFER_SECONDS,
         )
     )
-    # Old Android WebViews will otherwise cache this GET heuristically.
     response.headers["Cache-Control"] = "no-store"
     return response

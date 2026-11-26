@@ -1,22 +1,45 @@
-{% if home_missing %}
-<p class="bus-empty">
-  Set <code>HOME_LAT</code> and <code>HOME_LON</code> to use this page &mdash;
-  distances and the map centre are measured from them.
-</p>
-{% else %}
-<p class="map-updated">Updated {{ updated_at }}</p>
+{#- One line for the map's status pill (copied over by syncMarkers), so an
+    empty map always says why it is empty. -#}
+{%- set count = near | length -%}
+{%- if mode == "favourites" -%}
+  {%- if count -%}
+    {%- set status = count ~ (" bus" if count == 1 else " buses") ~ " due in " ~ window_minutes ~ " min" -%}
+    {%- set tone = "live" -%}
+  {%- elif later -%}
+    {%- set status = "Nothing in " ~ window_minutes ~ " min · next " ~ later[0].service_no ~ " in " ~ later[0].minutes ~ " min" -%}
+    {%- set tone = "quiet" -%}
+  {%- else -%}
+    {%- set status = "No buses running at your stops" -%}
+    {%- set tone = "quiet" -%}
+  {%- endif -%}
+{%- else -%}
+  {%- if count -%}
+    {%- set status = count ~ (" bus" if count == 1 else " buses") ~ " on the way" -%}
+    {%- set tone = "live" -%}
+  {%- else -%}
+    {%- set status = "Nothing running here right now" -%}
+    {%- set tone = "quiet" -%}
+  {%- endif -%}
+{%- endif -%}
+<div class="list-head" data-status="{{ status }}" data-tone="{{ tone }}">
+  <h2 class="list-title">
+    {%- if mode == "favourites" %}Due in the next {{ window_minutes }} min{% else %}Next buses{% endif -%}
+  </h2>
+  <p class="map-updated"><span class="pulse" aria-hidden="true"></span>Live · {{ updated_at }}</p>
+</div>
 
 {% if near %}
 <ul class="bus-list">
   {% for bus in near %}
+  {% set tier = "arriving" if bus.minutes == 0 else "soon" %}
   {# The map reads its markers off these rows, so one poll feeds both. #}
   <li
-    class="bus-row {{ 'arriving' if bus.minutes == 0 else 'soon' }}"
+    class="bus-row {{ tier }}"
     data-key="{{ bus.key }}"
     data-no="{{ bus.service_no }}"
     data-stop="{{ bus.stop_name }} ({{ bus.stop_code }})"
     data-eta="{{ "Arr" if bus.minutes == 0 else bus.minutes ~ " min" }}"
-    data-tier="{{ 'arriving' if bus.minutes == 0 else 'soon' }}"
+    data-tier="{{ tier }}"
     {% if bus.lat is not none %}
     data-lat="{{ bus.lat }}"
     data-lon="{{ bus.lon }}"
@@ -37,54 +60,62 @@
     data-load="{{ bus.load or '' }}"
     data-destination="{{ bus.destination or '' }}"
     data-type="{{ bus.type_label or '' }}"
-    {% if bus.type_label %}title="{{ bus.type_label }}"{% endif %}
   >
-    {# Only the service number lives in column 1. Each row is its own grid
-       container, so anything variable-width here lands every row's ETA at a
-       different x — the destination rides in the context column instead. #}
-    <span class="bus-no">{{ bus.service_no }}</span>
-    <span class="bus-meta">
-      <span class="bus-eta">{{ "Arr" if bus.minutes == 0 else bus.minutes ~ " min" }}</span>
-      <span class="bus-where">
-        {# Two different silences: a bus with no GPS fix says so, but a tracked
-           bus we simply have no reference point to measure from says nothing —
-           claiming "no live position" there would contradict its own pin. #}
-        {% if bus.distance %}
-        {{ bus.distance }}
-        {% elif bus.lat is none %}
-        no live position
-        {% endif %}
+    {# A route plate: fixed width, so every row's text starts at the same x
+       whatever the service number ("2" or "961M"). #}
+    <span class="plate">{{ bus.service_no }}</span>
+    <span class="bus-info">
+      <span class="bus-dest">{{ bus.destination or "Service " ~ bus.service_no }}</span>
+      <span class="bus-sub">
+        {%- set bits = [] -%}
+        {%- if mode == "favourites" %}{% set _ = bits.append(bus.stop_name) %}{% endif -%}
+        {%- if bus.distance %}{% set _ = bits.append(bus.distance) %}{% elif bus.lat is none %}{% set _ = bits.append("no live position") %}{% endif -%}
+        {%- if bus.load %}{% set _ = bits.append(bus.load) %}{% endif -%}
+        {%- if bus.type_label %}{% set _ = bits.append(bus.type_label) %}{% endif -%}
+        {{ bits | join(" · ") }}
       </span>
     </span>
-    <span class="bus-stop">
-      <span class="bus-at">{{ bus.stop_name }} ({{ bus.stop_code }})</span>
-      {% set detail = [bus.destination, bus.load] | select | join(" · ") %}
-      {% if detail %}<span class="bus-destination">{{ detail }}</span>{% endif %}
+    {# The number is the point of the row, so it gets the size; the unit is
+       there for the first-time reader and stays small. "Arr" is a word, not a
+       colour: arriving reads the same without colour vision. #}
+    <span class="eta">
+      {%- if bus.minutes == 0 -%}
+      <span class="eta-num">Arr</span>
+      {%- else -%}
+      <span class="eta-num">{{ bus.minutes }}</span><span class="eta-unit">min</span>
+      {%- endif -%}
     </span>
   </li>
   {% endfor %}
 </ul>
 {% else %}
-<p class="bus-empty">
-  {% if mode == "stop" %}
-  Nothing running at {{ selected.name }} right now.
+<div class="bus-empty">
+  {% if mode == "favourites" %}
+  <p class="empty-title">Nothing due in the next {{ window_minutes }} min</p>
+  <p class="empty-body">
+    {%- if later -%}
+    Next up: {% for bus in later %}<strong>{{ bus.service_no }}</strong> in {{ bus.minutes }} min{{ ", " if not loop.last }}{% endfor %}.
+    {%- else -%}
+    No buses are running at your saved stops right now.
+    {%- endif -%}
+  </p>
   {% else %}
-  Nothing arriving within {{ window_minutes }} min.
+  <p class="empty-title">Nothing running at {{ selected.name }}</p>
+  <p class="empty-body">Services may have finished for the night, or LTA isn't reporting this stop right now.</p>
   {% endif %}
-</p>
+</div>
 {% endif %}
 
 {% if untracked %}
 <p class="bus-note">
   {{ untracked | length }} of these {{ "has" if untracked | length == 1 else "have" }}
-  no GPS fix, so {{ "it is" if untracked | length == 1 else "they are" }} not pinned on the map.
+  no GPS fix, so {{ "it isn't" if untracked | length == 1 else "they aren't" }} on the map.
 </p>
 {% endif %}
 
-{% if later %}
+{% if near and later %}
 <p class="bus-later">
-  Next after:
-  {% for bus in later %}{{ bus.service_no }} in {{ bus.minutes }} min{{ ", " if not loop.last }}{% endfor %}
+  After that:
+  {% for bus in later %}<strong>{{ bus.service_no }}</strong> in {{ bus.minutes }} min{{ ", " if not loop.last }}{% endfor %}
 </p>
-{% endif %}
 {% endif %}
