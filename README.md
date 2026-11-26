@@ -223,7 +223,7 @@ For each bus, `route_path` in [`api/index.py`](api/index.py) works out where on 
 
 | Rule | Value | Why |
 | --- | --- | --- |
-| Fix age | 5 s + half the poll interval (15 s at 20 s polls), at most 30 s | A fix is old before the page sees it; the shadow starts from when the bus was there, so the pin is drawn where it likely is now, not where it was. The 5 s is an estimate to tune against buses on the ground |
+| Fix age | 10 s + half the poll interval (20 s at 20 s polls), at most 30 s | A fix is old before the page sees it; the shadow starts from when the bus was there, so the pin is drawn where it likely is now, not where it was. The 10 s (`LTA_LAG_S` in `static/glide.js`) is tuned by eye: 5 s still left pins trailing buses on the ground |
 | Pace | road distance to stop ÷ time LTA says remains | Pin arrives when the countdown says it will |
 | Speed ceiling | 60 km/h | An "Arr" ETA for a bus 1 km out must not fling the pin across the map |
 | Hold short of the stop | 80 m | Never "arrive" on a guess; the last stretch waits for a real fix |

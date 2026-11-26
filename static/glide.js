@@ -46,7 +46,9 @@ var Glide = (function () {
   // shadow from where the bus *was*, so pins ran 150-300 m behind the real
   // bus. LTA_LAG_S is how stale a fix already is when LTA publishes it: an
   // estimate, not a measured figure — tune it against buses on the ground.
-  var LTA_LAG_S = 5;
+  // Field test, 26 Nov 2026: at 5 s, pins on production still trailed the
+  // bus, so raised to 10 (20 s of shift at 20 s polls).
+  var LTA_LAG_S = 10;
 
   // Ceiling on the age estimate. A slow poll (REFRESH_SECONDS set high) would
   // otherwise start every shadow minutes back and draw pins far ahead of any
