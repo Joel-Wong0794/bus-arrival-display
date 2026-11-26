@@ -51,4 +51,20 @@ assert.equal(Glide.easeFactor(250), 0.125);
 assert.equal(Glide.easeFactor(10_000), 1);
 assert.equal(Glide.easeFactor(-50), 0);
 
+// Fix age: a fix is already old when LTA publishes it, and older again by the
+// time a poll picks it up (on average half a poll interval later).
+assert.equal(Glide.fixAgeS(20), Glide.LTA_LAG_S + 10);
+assert.equal(Glide.fixAgeS(10), Glide.LTA_LAG_S + 5);
+assert.equal(Glide.fixAgeS(NaN), Glide.LTA_LAG_S); // no interval known: LTA's part only
+assert.equal(Glide.fixAgeS(0), Glide.LTA_LAG_S);
+assert.equal(Glide.fixAgeS(-20), Glide.LTA_LAG_S);
+// A slow poll (REFRESH_SECONDS=300) must not push every pin minutes ahead on a guess.
+assert.equal(Glide.fixAgeS(300), Glide.MAX_FIX_AGE_S);
+
+// Anchoring at the fix's estimated time, not the poll's, means the shadow has
+// already driven on by the moment the fix is seen: 600 m in 120 s from the
+// fix is 5 m/s, so a 15 s old fix puts the bus 75 m on — not back at the fix.
+const seenAt = s(15);
+assert.equal(Glide.shadowTravelled(600, seenAt - 15_000, s(120), seenAt), 75);
+
 console.log("glide.js: all checks passed");
