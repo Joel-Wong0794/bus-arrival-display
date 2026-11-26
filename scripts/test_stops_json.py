@@ -26,14 +26,15 @@ stops = response.get_json()["stops"]
 with_position = {c for c, s in index.BUS_STOPS.items() if s.get("lat") is not None and s.get("lon") is not None}
 assert {s[0] for s in stops} == with_position and len(stops) > 5000, len(stops)
 
-# Shape: [code, name, lat, lon], all inside Singapore.
-for code, name, lat, lon in stops:
+# Shape: [code, name, lat, lon, road], all inside Singapore.
+for code, name, lat, lon, road in stops:
+    assert isinstance(road, str), code
     assert len(code) == 5 and code.isdigit(), code
     assert isinstance(name, str) and name, code
     assert 1.1 < lat < 1.5 and 103.5 < lon < 104.1, (code, lat, lon)
 
 # Agrees with the picker and nearest-stop search, which read the same lookup.
-known = {code: name for code, name, _, _ in stops}
+known = {code: name for code, name, _, _, _ in stops}
 assert known["84009"] == index.stop_name("84009"), known["84009"]
 
 print(f"stops.json: all checks passed ({len(stops)} stops)")

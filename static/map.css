@@ -94,6 +94,10 @@ a { color: inherit; }
   color: var(--faint);
 }
 
+/* The road, in the same quiet label as the code: it answers "which Blk 402"
+   without competing with the name below it. */
+.eyebrow-road { letter-spacing: 0.06em; }
+
 .title-row {
   display: flex;
   align-items: center;
@@ -273,6 +277,17 @@ a { color: inherit; }
 .stop-results a:focus-visible {
   background: var(--panel);
   outline: none;
+}
+
+.stop-result-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.stop-result-road {
+  font-size: 0.8rem;
+  color: var(--muted);
 }
 
 .stop-result-code {

@@ -683,10 +683,11 @@ def valid_stop_codes(raw: str | None) -> list[str]:
 
 
 def search_stops(query: str | None, limit: int = 12) -> list[dict]:
-    """Stops whose name or code matches, closest-looking matches first.
+    """Stops whose code, name or road matches, closest-looking matches first.
 
-    Works against a lookup with no coordinates, because choosing a stop by name
-    never needed a position — only the nearby list does. Scanning all 5000 on
+    Each hit carries its road: names repeat across the island ("Blk 402" is
+    three stops), and the road is what tells them apart. Searching a road
+    ("Bt Batok Rd") also works, ranked after name matches. Scanning all 5000 on
     each keystroke is microseconds, and saves shipping the whole set to a phone.
     """
     query = (query or "").strip().lower()
@@ -695,6 +696,7 @@ def search_stops(query: str | None, limit: int = 12) -> list[dict]:
     hits = []
     for code, entry in BUS_STOPS.items():
         name = entry.get("name") or ""
+        road = entry.get("road") or ""
         lowered = name.lower()
         if code.startswith(query):
             rank = 0
@@ -702,11 +704,21 @@ def search_stops(query: str | None, limit: int = 12) -> list[dict]:
             rank = 1
         elif query in lowered:
             rank = 2
+        elif query in road.lower():
+            rank = 3
         else:
             continue
-        hits.append((rank, name, code))
+        hits.append((rank, name, road, code))
     hits.sort()
-    return [{"code": code, "name": name} for _, name, code in hits[:limit]]
+    return [
+        {"code": code, "name": name, "road": road}
+        for _, name, road, code in hits[:limit]
+    ]
+
+
+def stop_road(code: str) -> str | None:
+    """The road a stop is on, or None when the lookup predates road names."""
+    return BUS_STOPS.get(code, {}).get("road")
 
 
 def get_bus_arrival(
@@ -882,11 +894,17 @@ def base_context(now: datetime) -> dict:
 
 
 def place_of(code: str) -> dict | None:
-    """A stop as a map marker: {code, name, lat, lon}, or None without a position."""
+    """A stop as a map marker: {code, name, road, lat, lon}, or None without a position."""
     position = stop_position(code)
     if position is None:
         return None
-    return {"code": code, "name": stop_name(code), "lat": position[0], "lon": position[1]}
+    return {
+        "code": code,
+        "name": stop_name(code),
+        "road": stop_road(code),
+        "lat": position[0],
+        "lon": position[1],
+    }
 
 
 def stop_context(now: datetime, code: str) -> dict:
@@ -902,7 +920,7 @@ def stop_context(now: datetime, code: str) -> dict:
     return {
         **base_context(now),
         "mode": "stop",
-        "selected": {"code": code, "name": stop_name(code)},
+        "selected": {"code": code, "name": stop_name(code), "road": stop_road(code)},
         "near": buses,
         "untracked": [bus for bus in buses if bus["lat"] is None],
         "places": [place] if place else [],
@@ -1009,14 +1027,14 @@ def stop_search():
     return response
 
 
-# Every stop with a position, as [code, name, lat, lon], for the tappable stop
+# Every stop with a position, as [code, name, lat, lon, road], for the tappable stop
 # rings on /map. Built once at import from the same BUS_STOPS the rest of the
 # app reads, so it can never drift from the picker or the nearest-stop search.
 # Compact on purpose (arrays, not objects; 5 decimals is ~1 m): about 230 KB,
 # ~70 KB once compressed in transit. Stops from an un-regenerated lookup with
 # no position are left out — there is nowhere to draw them.
 STOP_LIST = [
-    [code, stop["name"], round(stop["lat"], 5), round(stop["lon"], 5)]
+    [code, stop["name"], round(stop["lat"], 5), round(stop["lon"], 5), stop.get("road") or ""]
     for code, stop in sorted(BUS_STOPS.items())
     if isinstance(stop.get("lat"), (int, float)) and isinstance(stop.get("lon"), (int, float))
 ]

@@ -2,8 +2,8 @@
 const assert = require("node:assert/strict");
 const Favourites = require("../static/favourites.js");
 
-const a = { code: "11111", name: "Alpha" };
-const b = { code: "22222", name: "Beta" };
+const a = { code: "11111", name: "Alpha", road: "First Rd" };
+const b = { code: "22222", name: "Beta", road: "" };
 
 // Unreadable or hand-edited storage is treated as nothing saved.
 assert.deepEqual(Favourites.parse(null), []);
@@ -13,7 +13,7 @@ assert.deepEqual(Favourites.parse('{"code":"11111"}'), []);
 // Bad codes and repeats are dropped; a missing name falls back to the code.
 assert.deepEqual(
   Favourites.parse(JSON.stringify([a, { code: "abc" }, a, { code: "22222" }])),
-  [a, { code: "22222", name: "22222" }]
+  [a, { code: "22222", name: "22222", road: "" }]
 );
 
 // Capped at MAX, in saved order.
@@ -37,5 +37,11 @@ assert.equal(r.saved, false);
 assert.equal(r.list.length, Favourites.MAX - 1);
 
 assert.equal(Favourites.url([a, b]), "/map?stops=11111,22222");
+
+// Chips name the road only when two saved stops share a name.
+const twin = { code: "33333", name: "Alpha", road: "Second Ave" };
+assert.equal(Favourites.label([a, b], a), "Alpha");
+assert.equal(Favourites.label([a, twin], a), "Alpha · First Rd");
+assert.equal(Favourites.label([a, twin], twin), "Alpha · Second Ave");
 
 console.log("favourites.js: all checks passed");

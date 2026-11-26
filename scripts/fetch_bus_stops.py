@@ -28,7 +28,7 @@ OUT = pathlib.Path(__file__).resolve().parent.parent / "data" / "bus_stops.json"
 
 
 def fetch_all(api_key: str) -> tuple[dict[str, dict], int]:
-    """Returns {code: {"name", "lat", "lon"}} and a count of stops with no fix.
+    """Returns {code: {"name", "road", "lat", "lon"}} and a count of stops with no fix.
 
     Coordinates ride along in the same response the names come from, so keeping
     them costs nothing beyond file size. A stop missing them keeps its name and
@@ -51,6 +51,11 @@ def fetch_all(api_key: str) -> tuple[dict[str, dict], int]:
             if not code or not description:
                 continue
             entry = {"name": description}
+            # Names repeat across the island ("Blk 402" is several stops); the
+            # road is what tells them apart in search results and the header.
+            road = (stop.get("RoadName") or "").strip()
+            if road:
+                entry["road"] = road
             try:
                 lat = float(stop.get("Latitude") or 0)
                 lon = float(stop.get("Longitude") or 0)

@@ -28,7 +28,7 @@
       var item = list[i];
       if (!item || !/^\d{5}$/.test(item.code) || seen[item.code]) continue;
       seen[item.code] = true;
-      out.push({ code: item.code, name: String(item.name || item.code) });
+      out.push({ code: item.code, name: String(item.name || item.code), road: String(item.road || "") });
     }
     return out;
   }
@@ -41,7 +41,14 @@
     });
     if (without.length < list.length) return { list: without, saved: false };
     if (list.length >= MAX) return { list: list, saved: false, full: true };
-    return { list: list.concat([{ code: stop.code, name: stop.name }]), saved: true };
+    return { list: list.concat([{ code: stop.code, name: stop.name, road: stop.road || "" }]), saved: true };
+  }
+
+  // A chip's words. Names repeat across the island ("Blk 402" is three
+  // stops), so when two saved stops share one, each also names its road.
+  function label(list, stop) {
+    var twins = list.filter(function (s) { return s.name === stop.name; }).length;
+    return twins > 1 && stop.road ? stop.name + " · " + stop.road : stop.name;
   }
 
   function url(list) {
@@ -69,11 +76,12 @@
     }
   }
 
-  function chip(href, label, current, extraClass) {
+  function chip(href, text, current, extraClass, title) {
     var a = document.createElement("a");
     a.className = "chip" + (extraClass ? " " + extraClass : "");
     a.href = href;
-    a.textContent = label;
+    a.textContent = text;
+    if (title) a.title = title;
     if (current) a.setAttribute("aria-current", "page");
     return a;
   }
@@ -93,7 +101,13 @@
       nav.appendChild(chip(url(list), "All favourites", mode === "favourites", "chip-all"));
       list.forEach(function (s) {
         nav.appendChild(
-          chip("/map?stop=" + s.code, s.name, mode === "stop" && current === s.code && !nearMe)
+          chip(
+            "/map?stop=" + s.code,
+            label(list, s),
+            mode === "stop" && current === s.code && !nearMe,
+            "",
+            s.road ? s.name + ", " + s.road : s.name
+          )
         );
       });
     }
@@ -111,7 +125,11 @@
   function bindStar() {
     var button = document.getElementById("star");
     if (!button) return;
-    var stop = { code: button.getAttribute("data-code"), name: button.getAttribute("data-name") };
+    var stop = {
+      code: button.getAttribute("data-code"),
+      name: button.getAttribute("data-name"),
+      road: button.getAttribute("data-road") || "",
+    };
     setStar(button, load().some(function (s) { return s.code === stop.code; }));
     button.addEventListener("click", function () {
       var result = toggle(load(), stop);
@@ -149,6 +167,7 @@
     MAX: MAX,
     parse: parse,
     toggle: toggle,
+    label: label,
     url: url,
     load: load,
     renderChips: renderChips,

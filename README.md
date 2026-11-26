@@ -161,7 +161,7 @@ python scripts/fetch_bus_routes.py
 
 It downloads from [sgbusdata](https://github.com/cheeaun/sgbusdata) on GitHub (~550 KB, no DataMall key or calls) and takes a few seconds. Re-run it when routes change; sgbusdata refreshes from LTA on its own schedule, and the file records which update it was baked from. Without the file, pins glide in a straight line instead.
 
-The file holds a name **and position** per stop — `{"name": ..., "lat": ..., "lon": ...}` — since the `BusStops` response carries coordinates in the same rows the names come from. Positions are what let the page find the stop nearest you and measure distance from a selected one.
+The file holds a name, **road and position** per stop — `{"name": ..., "road": ..., "lat": ..., "lon": ...}` — since the `BusStops` response carries coordinates in the same rows the names come from. Positions are what let the page find the stop nearest you and measure distance from a selected one.
 
 A file predating that change (plain `"Hotel Grand Pacific"` values) is read without complaint; those features simply stay switched off until it is regenerated. The script prints how many stops came back without coordinates — anything other than a small number means the `Latitude`/`Longitude` fields have been renamed upstream.
 
@@ -261,7 +261,7 @@ Any stop can be saved with the **Save** button beside its name. Saved stops appe
 
 ### Picking a stop
 
-The search box reaches **any of the ~5,200 stops** by name or code, and opens `/map?stop=<code>`. Matching happens server-side and returns a dozen results at a time, rather than shipping a quarter of a megabyte of options to a phone on every page load. The choice lives in the URL, so it is per-tab and bookmarkable.
+The search box reaches **any of the ~5,200 stops** by name or code, and opens `/map?stop=<code>`. Each result shows its **road** under the name, because names repeat across the island ("Blk 402" is three different stops); typing a road name ("Bt Batok Rd") finds the stops on it too. The road also appears beside the stop code above the stop's name, in a tapped stop's popup, and on a favourite chip when two saved stops share a name. Matching happens server-side and returns a dozen results at a time, rather than shipping a quarter of a megabyte of options to a phone on every page load. The choice lives in the URL, so it is per-tab and bookmarkable.
 
 | | Favourites | One stop |
 | --- | --- | --- |
@@ -295,7 +295,7 @@ Leaflet is loaded from a CDN; it is the only dependency beyond Flask, requests, 
 
 From the zoom the page opens at (15) and closer, every bus stop in view is drawn as a small grey **bus stop sign** — a rounded square with a bus on it. Tap one for a popup with its name, code, and a **Show buses here** button, which opens `/map?stop=<code>` — the same view, link, and weather as choosing it in the search box. Zoomed out further, the signs disappear: 5,000 of them would be clutter, and too dense to hit with a finger.
 
-- **One download, then nothing per pan.** `GET /stops.json` returns every stop as `[code, name, lat, lon]` (~230 KB, ~70 KB compressed), built at startup from the same `data/bus_stops.json` as the search box, and cached for a day (`public, max-age=86400`) so Vercel's CDN and the phone answer repeat visits. Each pan or zoom then picks out the stops inside the visible area in the browser — a sub-millisecond scan of 5,000 positions. Asking the server for "stops in this rectangle" instead would cost a request per pan and put the map's position in URLs.
+- **One download, then nothing per pan.** `GET /stops.json` returns every stop as `[code, name, lat, lon, road]` (~335 KB, ~80 KB compressed), built at startup from the same `data/bus_stops.json` as the search box, and cached for a day (`public, max-age=86400`) so Vercel's CDN and the phone answer repeat visits. Each pan or zoom then picks out the stops inside the visible area in the browser — a sub-millisecond scan of 5,000 positions. Asking the server for "stops in this rectangle" instead would cost a request per pan and put the map's position in URLs.
 - **A square, on purpose.** Every other place marker — you, and the rings on your stops — is a circle, so the shape alone says "stop". Grey, so it never competes with the red and yellow buses or the blues.
 - **Only the stops in view exist on the page** — typically 10–150 small markers, never all 5,000 — so panning stays smooth on a phone. The sign is drawn 16 px inside an invisible 32 px box, which is its finger-sized tap area.
 - **Never in the way.** Signs live in their own map layer between the roads and Leaflet's markers, so a sign never covers a bus, the blue *you* dot, or a ringed stop — which keeps its own bigger ring and is not drawn twice.

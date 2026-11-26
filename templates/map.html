@@ -33,7 +33,7 @@
     <header class="top">
       <div class="top-title">
         <p class="eyebrow">
-          {%- if mode == "stop" %}Stop {{ selected.code }}
+          {%- if mode == "stop" %}Stop {{ selected.code }}{% if selected.road %}<span class="eyebrow-road"> · {{ selected.road }}</span>{% endif %}
           {%- elif mode == "favourites" %}{{ favourites | length }} saved {{ "stop" if favourites | length == 1 else "stops" }}
           {%- else %}Bus map{% endif -%}
         </p>
@@ -49,6 +49,7 @@
             aria-pressed="false"
             data-code="{{ selected.code }}"
             data-name="{{ selected.name }}"
+            data-road="{{ selected.road or '' }}"
           >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z" /></svg>
             <span class="star-label">Save</span>
@@ -194,7 +195,7 @@
           title: p.name,
         })
           .addTo(map)
-          .bindPopup(stopPopup([p.code, p.name, p.lat, p.lon], true));
+          .bindPopup(stopPopup([p.code, p.name, p.lat, p.lon, p.road], true));
       });
 
       // ---- Tappable stops ------------------------------------------------
@@ -242,7 +243,8 @@
         name.textContent = stop[1];
         var code = document.createElement("div");
         code.className = "stop-popup-code";
-        code.textContent = "Stop " + stop[0];
+        // The road tells apart stops that share a name ("Blk 402" is three).
+        code.textContent = "Stop " + stop[0] + (stop[4] ? " · " + stop[4] : "");
         // A real link, so Back returns to this view and a long-press can open
         // it in a new tab. Same URL as choosing the stop in the search box.
         var go = document.createElement("a");

@@ -46,9 +46,18 @@ assert 'data-mode="start"' in page and 'id="start"' in page
 assert "hx-get=\"/map-list" not in page
 assert client.get("/map").status_code == 200
 
+# Same-name stops are told apart by road, in search results and the header.
+hits = [h for h in index.search_stops("blk 402") if h["name"] == "Blk 402"]
+assert len(hits) >= 2 and all(h["road"] for h in hits), hits
+assert len({h["road"] for h in hits}) == len(hits), hits
+results = client.get("/stops?q=blk%20402").get_data(as_text=True)
+assert results.count('class="stop-result-road"') >= 2
+assert index.search_stops("bt batok rd"), "a road name should find its stops"
+
 # One stop: everything running there.
 page = client.get("/map?stop=84009").get_data(as_text=True)
 assert 'data-mode="stop"' in page and 'id="star"' in page
+assert 'class="eyebrow-road"> · ' + index.stop_road("84009") in page
 assert 'class="plate">10<' in page and "Next buses" in page
 
 # Favourites: both stops fetched, the 9-minute bus moves to "next up".
