@@ -80,4 +80,21 @@ use({"9": [{"line": encode_polyline(loop), "stops": [["A", 0], ["C", round(2 * S
 path = index.route_path("9", "A", (1.3045, 103.8), (1.300, 103.8), 600)
 assert abs(path[-1][2] - 500) <= 3, path  # 500 m to A on the way back, not 3.5 km
 
+# fit_route says which line and where: what the browser needs to draw the
+# tapped bus's route. Back on the straight road, a bus halfway from A to B.
+use({"9": [{"line": encode_polyline(LINE), "stops": [["A", 0], ["B", round(STEP)], ["C", round(2 * STEP)]]}]})
+n, along, stop_m = index.fit_route("9", "C", (1.3045, 103.8001), ETA)
+assert n == 0 and abs(along - STEP / 2) <= 3 and stop_m == round(2 * STEP), (n, along, stop_m)
+assert index.fit_route("9", "C", (1.3045, 103.81), ETA) is None  # too far off the road
+
+# /route.json: the whole line with running metres, and every stop on it.
+client = index.app.test_client()
+route = client.get("/route.json?service=9&pattern=0")
+assert route.status_code == 200 and route.headers["Cache-Control"] == "public, max-age=86400"
+body = route.get_json()
+assert [p[2] for p in body["line"]] == [0, round(STEP), round(2 * STEP)], body["line"]
+assert [s[0] for s in body["stops"]] == ["A", "B", "C"] and body["stops"][2][4] == round(2 * STEP)
+for bad in ("service=999&pattern=0", "service=9&pattern=1", "service=9&pattern=x", "service=9"):
+    assert client.get("/route.json?" + bad).status_code == 404, bad
+
 print("route_path: all checks passed")

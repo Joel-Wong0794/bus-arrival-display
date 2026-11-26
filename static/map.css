@@ -453,6 +453,7 @@ a { color: inherit; }
 
 /* Bus pins: the service number on a plate, legible without a tap. */
 .bus-pin {
+  cursor: pointer;
   display: inline-block;
   transform: translate(-50%, -50%);
   min-width: 34px;
@@ -471,6 +472,127 @@ a { color: inherit; }
 
 .bus-pin.arriving { background: var(--red); }
 .bus-pin.soon { background: var(--amber); }
+
+/* The tapped bus: a white rim lifts it off its own bright route line. */
+.bus-pin.selected {
+  border-color: var(--text);
+  box-shadow: 0 0 0 3px rgba(11, 16, 22, 0.85), 0 4px 12px rgba(0, 0, 0, 0.7);
+}
+
+/* ---- The selected bus's route (drawn by drawRoute in map.html) ---------- */
+
+/* Road already driven, and beyond your stop: present, but quiet. */
+.route-done,
+.route-beyond {
+  stroke: var(--muted);
+  stroke-width: 3;
+  stroke-opacity: 0.45;
+  fill: none;
+}
+
+.route-done { stroke-dasharray: 2 7; }
+
+/* Still to drive to your stop: the bus's own colour, thick enough to read
+   at a glance over the map's own coloured roads. */
+.route-ahead {
+  stroke-width: 6;
+  stroke-opacity: 0.95;
+  fill: none;
+}
+
+.route-ahead.soon { stroke: var(--amber); }
+.route-ahead.arriving { stroke: var(--red); }
+
+.route-stop {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  fill: var(--muted);
+  fill-opacity: 0.8;
+}
+
+.route-stop.coming {
+  fill: var(--text);
+  fill-opacity: 1;
+}
+
+/* The selected bus, over the map's bottom edge. */
+.bus-card {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 22px; /* above the attribution line */
+  z-index: 800;
+  display: grid;
+  grid-template-columns: 3.6rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 8px 10px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: rgba(18, 26, 35, 0.96);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6);
+  animation: card-in 200ms var(--ease);
+}
+
+.bus-card[hidden] { display: none; }
+
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+.bus-card .plate { height: 38px; font-size: 1.3rem; }
+.bus-card .plate.soon { background: var(--amber); }
+.bus-card .plate.arriving { background: var(--red); }
+
+.bus-card-text { min-width: 0; }
+
+.bus-card-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bus-card-sub {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.bus-card-route {
+  margin-top: 3px;
+  font-family: var(--display);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+}
+
+.bus-card-route[hidden] { display: none; }
+
+.bus-card-close {
+  align-self: start;
+  display: grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  margin: -6px -2px 0 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.bus-card-close:hover { color: var(--text); background: var(--panel-2); }
+
+.bus-card-close svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
 
 /* Your stop(s): a ring, so it reads as a place, never as another vehicle. */
 .stop-pin {
@@ -660,6 +782,12 @@ a { color: inherit; }
 .bus-row[data-lat]:hover { border-color: var(--faint); }
 .bus-row[data-lat]:active { background: var(--panel-2); transform: scale(0.99); }
 
+/* The row whose bus is selected on the map. */
+.bus-row.selected {
+  border-color: var(--text);
+  background: var(--panel-2);
+}
+
 /* The route plate, filled with the signal colour so the row's state is the
    first thing seen — and repeated as a word ("Arr") in the ETA column. */
 .plate {
@@ -829,6 +957,7 @@ a { color: inherit; }
 .key.place { border: 3px solid var(--cyan); border-radius: 50%; }
 .key.you { background: var(--blue); border-radius: 50%; box-shadow: 0 0 0 2px var(--text) inset; }
 .key.pick { background: #d9dde2; }
+.key.route { width: 16px; height: 4px; border-radius: 2px; background: var(--amber); }
 
 /* ---- Toast -------------------------------------------------------------- */
 
