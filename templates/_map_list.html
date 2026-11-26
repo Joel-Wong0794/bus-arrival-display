@@ -56,6 +56,14 @@
     {# The road to the stop, [[lat, lon, metres], ...] — see route_path in
        api/index.py. Single-quoted: tojson escapes ' but not ". #}
     {% if bus.path %}data-path='{{ bus.path | tojson }}'{% endif %}
+    {# Which road line the bus is on and where along it, for drawing its
+       whole route when it is tapped. Absent when it did not fit its line. #}
+    {% if bus.route %}
+    data-route-service="{{ bus.route.service }}"
+    data-route-pattern="{{ bus.route.pattern }}"
+    data-route-along="{{ bus.route.along }}"
+    data-route-stop="{{ bus.route.stop_m }}"
+    {% endif %}
     {% endif %}
     data-load="{{ bus.load or '' }}"
     data-destination="{{ bus.destination or '' }}"

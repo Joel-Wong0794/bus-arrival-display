@@ -123,6 +123,20 @@
       {# One line over the map saying what it shows, so an empty map is never
          a silent one. Copied in from the list after every poll. #}
       <p class="map-status" id="map-status" aria-live="polite" hidden></p>
+      {# The tapped bus, along the map's bottom edge rather than in a popup:
+         a popup sits on the bus and hides the very road it is about to
+         drive. Filled by showCard() from the bus's list row. #}
+      <section class="bus-card" id="bus-card" hidden aria-live="polite" aria-label="Selected bus">
+        <span class="plate" id="card-plate"></span>
+        <div class="bus-card-text">
+          <p class="bus-card-title" id="card-title"></p>
+          <p class="bus-card-sub" id="card-sub"></p>
+          <p class="bus-card-route" id="card-route" hidden></p>
+        </div>
+        <button type="button" class="bus-card-close" id="card-close" aria-label="Close and hide the route">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </section>
     </div>
 
     {% if mode != "start" %}
@@ -154,6 +168,7 @@
       <span><span class="key soon"></span>On the way</span>
       <span><span class="key place"></span>{{ "Your stops" if mode == "favourites" else "This stop" }}</span>
       <span><span class="key pick"></span>Tap a stop</span>
+      <span><span class="key route"></span>Tap a bus for its route</span>
       {# Shown by startLocating() once the phone has given a position. #}
       <span id="legend-you" hidden><span class="key you"></span>You</span>
     </footer>
@@ -167,7 +182,7 @@
       var PLACE_POINTS = PLACES.map(function (p) { return L.latLng(p.lat, p.lon); });
 
       var map = L.map("map", { zoomControl: false });
-      L.control.zoom({ position: "bottomright" }).addTo(map);
+      L.control.zoom({ position: "topright" }).addTo(map); // the bottom edge is the bus card's
       if (PLACE_POINTS.length > 1) {
         map.fitBounds(L.latLngBounds(PLACE_POINTS), { padding: [40, 40], maxZoom: 16 });
       } else if (PLACE_POINTS.length) {
@@ -444,27 +459,16 @@
 
           var tier = row.getAttribute("data-tier");
           var no = row.getAttribute("data-no");
-          var destination = row.getAttribute("data-destination");
-          // Vehicle type lives here rather than on the pin: the popup is the
-          // one place it surfaces on a touch screen, where :hover never fires.
-          var parts = [row.getAttribute("data-distance")];
-          if (row.getAttribute("data-type")) parts.push(row.getAttribute("data-type"));
-          if (row.getAttribute("data-load")) parts.push(row.getAttribute("data-load"));
-          var detail =
-            "<b>" + no + "</b>" +
-            (destination ? " " + destination : "") +
-            " &middot; " + row.getAttribute("data-eta") +
-            "<br>at " + row.getAttribute("data-stop") +
-            "<br>" + parts.join(" &middot; ");
 
           var marker = takeNearest(spare[groupKey], at);
           if (marker) {
-            marker.setIcon(busIcon(no, tier));
-            marker.getPopup().setContent(detail);
+            marker.setIcon(busIcon(no, tier, marker === selected));
           } else {
-            marker = L.marker(at, { icon: busIcon(no, tier) })
-              .addTo(map)
-              .bindPopup(detail);
+            marker = L.marker(at, { icon: busIcon(no, tier) }).addTo(map);
+            // Tapping a pin (or its row) selects the bus and draws its route.
+            marker.on("click", function (event) {
+              selectMarker(event.target);
+            });
             // A new pin is a newly seen bus: remember what LTA promises now.
             // Only here, not on every poll — later, revised predictions are
             // not what you planned your walk around.
@@ -485,8 +489,13 @@
 
         // Unclaimed: the bus passed the stop, left the window, or lost GPS.
         for (var g in spare) {
-          for (var j = 0; j < spare[g].length; j++) map.removeLayer(spare[g][j]);
+          for (var j = 0; j < spare[g].length; j++) {
+            if (spare[g][j] === selected) clearRoute();
+            map.removeLayer(spare[g][j]);
+          }
         }
+        // A fresh fix moves the bus along its line: redraw where it is.
+        if (selected) drawRoute(selected, false);
 
         // The one-line summary over the map, from the list just swapped in.
         var status = document.querySelector("#bus-list [data-status]");
@@ -549,12 +558,187 @@
         }
       }
 
-      function busIcon(no, tier) {
+      function busIcon(no, tier, isSelected) {
         return L.divIcon({
           className: "",
-          html: '<span class="bus-pin ' + tier + '">' + no + "</span>",
+          html: '<span class="bus-pin ' + tier + (isSelected ? " selected" : "") + '">' + no + "</span>",
           iconSize: [0, 0],
         });
+      }
+
+      // ---- The selected bus's route ---------------------------------------
+      // Tapping a bus (its pin or its row) draws the whole line its service
+      // drives, split at the bus: the road it has covered is faint, the road
+      // still to drive to your stop is bright, and every stop on the way is a
+      // dot. The popup gains "N stops to go". One /route.json per service and
+      // direction, cached by the browser for a day and here for the visit.
+      //
+      // Only for buses that fitted their line (data-route-*); a bus placed by
+      // a straight line has no route to show and just opens its popup.
+      map.createPane("route").style.zIndex = 420; // over roads, under stop signs
+      var routeLayer = L.layerGroup().addTo(map);
+      var routeCache = {}; // "service|pattern" -> promise of {line, stops}
+      var selected = null; // the marker whose route is drawn
+
+      function rowOf(marker) {
+        for (var key in markers) {
+          if (markers[key] === marker) {
+            return document.querySelector('#bus-list .bus-row[data-key="' + key + '"]');
+          }
+        }
+        return null;
+      }
+
+      function loadRoute(service, pattern) {
+        var id = service + "|" + pattern;
+        if (!routeCache[id]) {
+          routeCache[id] = fetch(
+            "/route.json?service=" + encodeURIComponent(service) + "&pattern=" + pattern
+          ).then(function (response) {
+            if (!response.ok) throw new Error("no route");
+            return response.json();
+          });
+          // A failure is not remembered, so a later tap can try again.
+          routeCache[id].catch(function () { delete routeCache[id]; });
+        }
+        return routeCache[id];
+      }
+
+      // The stretch of line between two distances along it, ends interpolated.
+      function stretch(line, from, to) {
+        var out = [];
+        for (var i = 0; i < line.length; i++) {
+          var p = line[i];
+          var prev = line[i - 1];
+          if (prev && prev[2] < from && p[2] > from) out.push(between(prev, p, from));
+          if (p[2] >= from && p[2] <= to) out.push([p[0], p[1]]);
+          if (prev && prev[2] < to && p[2] > to) { out.push(between(prev, p, to)); break; }
+          if (p[2] > to) break;
+        }
+        return out;
+      }
+
+      function between(a, b, m) {
+        var t = (m - a[2]) / (b[2] - a[2]);
+        return [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+      }
+
+      function clearRoute() {
+        routeLayer.clearLayers();
+        if (selected) {
+          var row = rowOf(selected);
+          if (row) {
+            row.classList.remove("selected");
+            selected.setIcon(busIcon(row.getAttribute("data-no"), row.getAttribute("data-tier"), false));
+          }
+        }
+        selected = null;
+        document.getElementById("bus-card").hidden = true;
+        // The stop signs come back once no route is being shown.
+        map.getPane("stops").style.display = "";
+      }
+
+      function selectMarker(marker) {
+        if (selected === marker) return drawRoute(marker, true);
+        if (selected) clearRoute();
+        selected = marker;
+        drawRoute(marker, true);
+      }
+
+      // The card's words, from the bus's row: textContent throughout, since
+      // destinations and stop names come from LTA's data.
+      function showCard(row) {
+        var card = document.getElementById("bus-card");
+        var plate = document.getElementById("card-plate");
+        plate.textContent = row.getAttribute("data-no");
+        plate.className = "plate " + row.getAttribute("data-tier");
+        document.getElementById("card-title").textContent =
+          (row.getAttribute("data-destination") || "Service " + row.getAttribute("data-no")) +
+          " · " + row.getAttribute("data-eta");
+        var parts = ["at " + row.getAttribute("data-stop")];
+        ["data-distance", "data-type", "data-load"].forEach(function (name) {
+          if (row.getAttribute(name)) parts.push(row.getAttribute(name));
+        });
+        document.getElementById("card-sub").textContent = parts.join(" · ");
+        card.hidden = false;
+      }
+
+      function setRouteNote(text) {
+        var note = document.getElementById("card-route");
+        note.textContent = text || "";
+        note.hidden = !text;
+      }
+
+      // Tapping empty map, the card's close button, or Escape: put it back.
+      map.on("click", clearRoute);
+      document.getElementById("card-close").addEventListener("click", clearRoute);
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape" && selected) clearRoute();
+      });
+
+      function drawRoute(marker, frame) {
+        var row = rowOf(marker);
+        if (!row) return;
+        document.querySelectorAll("#bus-list .bus-row.selected").forEach(function (r) {
+          r.classList.remove("selected");
+        });
+        row.classList.add("selected");
+        marker.setIcon(busIcon(row.getAttribute("data-no"), row.getAttribute("data-tier"), true));
+        showCard(row);
+        var service = row.getAttribute("data-route-service");
+        if (!service) {
+          // No fitted line: the card alone, and nothing stale behind it.
+          routeLayer.clearLayers();
+          setRouteNote("Route not available for this bus right now");
+          return;
+        }
+        // While a route is up, the grey stop signs step aside: the route's
+        // own stops are the ones that matter, and the signs hide the line.
+        map.getPane("stops").style.display = "none";
+        var pattern = row.getAttribute("data-route-pattern");
+        var along = parseFloat(row.getAttribute("data-route-along"));
+        var stopM = parseFloat(row.getAttribute("data-route-stop"));
+        var tier = row.getAttribute("data-tier");
+        loadRoute(service, pattern).then(function (route) {
+          if (selected !== marker) return; // tapped something else meanwhile
+          routeLayer.clearLayers();
+          var line = route.line;
+          var end = line[line.length - 1][2];
+          var common = { pane: "route", interactive: false, lineCap: "round", lineJoin: "round" };
+          // Covered, and beyond your stop: the same faint line.
+          L.polyline(stretch(line, 0, along), L.extend({ className: "route-done" }, common)).addTo(routeLayer);
+          L.polyline(stretch(line, stopM, end), L.extend({ className: "route-beyond" }, common)).addTo(routeLayer);
+          // Still to drive: bright, in the bus's own colour.
+          var ahead = stretch(line, along, stopM);
+          L.polyline(ahead, L.extend({ className: "route-ahead " + tier }, common)).addTo(routeLayer);
+          // Every stop on the line; the ones still to come stand out.
+          var toGo = 0;
+          route.stops.forEach(function (s) {
+            var coming = s[4] > along && s[4] < stopM;
+            if (coming) toGo++;
+            L.circleMarker([s[2], s[3]], {
+              pane: "route",
+              radius: coming ? 4 : 3,
+              className: coming ? "route-stop coming" : "route-stop",
+              interactive: false,
+            }).addTo(routeLayer);
+          });
+          // How far along, in words: what the map already shows, said plainly.
+          setRouteNote(
+            toGo === 0 ? "Next stop is yours" : toGo + (toGo === 1 ? " stop" : " stops") + " before yours"
+          );
+          // On a tap, frame the bus and the road to your stop (not the whole
+          // route, which can cross the island). Not on later polls, so the
+          // map never moves while you are looking at it.
+          if (frame && ahead.length > 1) {
+            var cardHeight = document.getElementById("bus-card").offsetHeight;
+            map.fitBounds(L.latLngBounds(ahead).extend(marker.getLatLng()), {
+              paddingTopLeft: [40, 60], // clear of the status line
+              paddingBottomRight: [40, cardHeight + 40], // clear of the card
+              maxZoom: 17,
+            });
+          }
+        }).catch(function () {}); // no route: the popup still works
       }
 
       function focusBus(row) {
@@ -566,8 +750,7 @@
         if (frame.getBoundingClientRect().bottom < 80) {
           frame.scrollIntoView({ behavior: "smooth", block: "start" });
         }
-        map.panTo(marker.getLatLng());
-        marker.openPopup();
+        selectMarker(marker); // draws and frames its route
       }
 
       // Delegated, so the handler survives every htmx swap of the rows. Rows

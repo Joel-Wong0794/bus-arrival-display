@@ -189,6 +189,18 @@ Three things worth knowing about the data:
 
 Markers are keyed per vehicle, so a refresh moves a pin rather than rebuilding it — otherwise an open popup would slam shut every poll. The view is framed once on load and never re-fitted, so a refresh cannot yank the map while you are panning it.
 
+### A bus's route
+
+Tap a bus — its pin on the map or its row in the list — to see where it is on its route:
+
+- **The road still to drive to your stop** is drawn thick, in the bus's own colour (amber, or red when arriving). The road it has already covered is a faint dotted line, and the route beyond your stop is faint and solid, so the whole line is there for context.
+- **Every stop on the route** is a dot; the ones between the bus and your stop are brighter, and the card says how many: "4 stops before yours", or "Next stop is yours".
+- **A card along the map's bottom edge** names the service, destination and countdown, the stop, the distance by road, vehicle type and crowding. It replaces the old pin popup, which sat on the bus and hid the very road it was about to drive. The zoom buttons moved to the top right to make room.
+- **The map frames the bus and the road to your stop** on a tap — not the whole route, which can cross the island — and then stays put: each 20-second refresh moves the split point along the line without moving the map.
+- **The grey stop signs step aside** while a route is showing; the route's own stops are the ones that matter. Tap empty map, the card's ✕, or press Escape to put everything back.
+
+The server already works out which line a bus is on, and where along it, to make pins glide on the road (`fit_route` in `api/index.py`). Each list row now carries that as `data-route-service`, `data-route-pattern`, `data-route-along` and `data-route-stop`. Tapping fetches the whole line once from `GET /route.json?service=<no>&pattern=<n>` — `{"line": [[lat, lon, metres], ...], "stops": [[code, name, lat, lon, metres], ...]}`, metres measured along the line — cached for a day like `/stops.json`, and splits it at those two distances in the browser. A bus that did not fit its line (GPS off the road, or a service missing from the bake) still gets the card, which says the route is not available rather than drawing a guess.
+
 ### Gliding pins
 
 A pin that only moved on each GPS fix sat still for ~20s and then teleported. Pins now glide along the bus's route in between, using the "shadow bus" model from [Next Stop's write-up](https://nextstopsg.app/interpolation.html), cut down to what DataMall's data supports.
@@ -401,4 +413,5 @@ No formal test suite. To verify the timing logic works:
 16. Run `python scripts/test_local_weather.py` — nearest area and station, a silent station skipped, and each fallback.
 17. Open `/map?stop=<a stop in the east>` and `/map?stop=<one in the north>`: each header should name a different nearby area (`Bedok · …`, `Woodlands · …`).
 18. Run `python scripts/test_stops_json.py` — the stop list's shape, its day-long caching, and that it matches the search box's lookup.
+20. Tap a bus: its road to your stop should light up, the card should say how many stops are left, and tapping empty map should clear it.
 19. On `/map`, tap a stop sign: the popup should name it, and **Show buses here** should open that stop. Zoom out past 15 and the signs should go.

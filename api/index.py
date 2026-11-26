@@ -550,37 +550,24 @@ def line_point(points: list, metres: list, at: float) -> tuple[float, float]:
     return points[-1]
 
 
-def route_path(
-    service_no: str,
-    stop_code: str,
-    fix: tuple[float, float],
-    target: tuple[float, float],
-    eta_s: float,
-) -> list[list[float]]:
-    """The road this bus will drive to its stop, as [[lat, lon, metres], ...].
-
-    Metres are measured along the road line relative to where the bus is: 0 at
-    the bus, rising to its road distance from the stop at the last point. Up to
-    PATH_BEHIND_M of road behind the bus comes first (negative metres), so the
-    browser can glide a lagging pin forward along the road, and at most
-    PATH_AHEAD_M ahead is sent before the path cuts straight to the stop.
+def fit_route(
+    service_no: str, stop_code: str, fix: tuple[float, float], eta_s: float
+) -> tuple[int, float, float] | None:
+    """Where on its route this bus is: (pattern, metres along, stop's metres).
 
     How the bus is placed on its route (Next Stop's "snapping"): every stretch
     of every pattern leading to this stop is a candidate — for each time the
     pattern visits the stop. The GPS fix is projected onto each; fits further
     than SNAP_RADIUS_M are dropped, and so are any that would need more than
     60 km/h to make LTA's ETA (eta_s, seconds from now). The closest fit wins,
-    ties going to the one nearer the stop. The bus is then drawn *on* the road
-    at that projected spot, since the line follows the road.
+    ties going to the one nearer the stop.
 
-    Falls back to a straight line, fix to stop, when the service is not in the
-    bake or nothing fits.
+    None when the service is not in the bake or nothing fits.
     """
-    straight = [[fix[0], fix[1], 0], [target[0], target[1], round(haversine_m(*fix, *target))]]
     reachable_m = MAX_SPEED_MPS * (max(0.0, eta_s) + ETA_SLACK_S)
     patterns = BUS_ROUTES.get(service_no)
     if not isinstance(patterns, list):
-        return straight
+        return None
 
     candidates = []  # (offset_m, remaining_m, pattern, along_m, stop_m)
     for n, pattern in enumerate(patterns):
@@ -601,11 +588,40 @@ def route_path(
                 if 0 <= remaining <= reachable_m:
                     candidates.append((offset, remaining, n, along, stop_m))
     if not candidates:
-        return straight
+        return None
     best_offset = min(c[0] for c in candidates)
     _, _, n, along, stop_m = min(
         (c for c in candidates if c[0] <= best_offset + SNAP_TIE_M), key=lambda c: c[1]
     )
+    return n, along, stop_m
+
+
+def route_path(
+    service_no: str,
+    stop_code: str,
+    fix: tuple[float, float],
+    target: tuple[float, float],
+    eta_s: float,
+    fit: tuple[int, float, float] | None = None,
+) -> list[list[float]]:
+    """The road this bus will drive to its stop, as [[lat, lon, metres], ...].
+
+    Metres are measured along the road line relative to where the bus is: 0 at
+    the bus, rising to its road distance from the stop at the last point. Up to
+    PATH_BEHIND_M of road behind the bus comes first (negative metres), so the
+    browser can glide a lagging pin forward along the road, and at most
+    PATH_AHEAD_M ahead is sent before the path cuts straight to the stop.
+
+    The bus is placed with fit_route (pass `fit` when it has already been
+    worked out) and drawn *on* the road at that spot, since the line follows
+    the road. Falls back to a straight line, fix to stop, when nothing fits.
+    """
+    straight = [[fix[0], fix[1], 0], [target[0], target[1], round(haversine_m(*fix, *target))]]
+    if fit is None:
+        fit = fit_route(service_no, stop_code, fix, eta_s)
+    if fit is None:
+        return straight
+    n, along, stop_m = fit
 
     points, metres = route_line(service_no, n)
     low = max(0.0, along - PATH_BEHIND_M)
@@ -843,18 +859,26 @@ def collect_map_buses(
                     "arrival_ms": bus["arrival_ms"],
                     "stop_lat": target[0] if target else None,
                     "stop_lon": target[1] if target else None,
-                    # The road from this bus to its stop; None without a fix
-                    # or a stop position. See route_path.
-                    "path": route_path(
-                        service_no,
-                        stop["code"],
-                        (bus["lat"], bus["lon"]),
-                        target,
-                        bus["exact_minutes"] * 60,
-                    )
-                    if bus["lat"] is not None and target
-                    else None,
+                    "path": None,
+                    "route": None,
                 }
+                if bus["lat"] is not None and target:
+                    fix = (bus["lat"], bus["lon"])
+                    eta_s = bus["exact_minutes"] * 60
+                    fit = fit_route(service_no, stop["code"], fix, eta_s)
+                    # The road from this bus to its stop. See route_path.
+                    row["path"] = route_path(service_no, stop["code"], fix, target, eta_s, fit)
+                    # Which line it is on and where, so tapping the bus can
+                    # draw its whole route from /route.json. None when the bus
+                    # did not fit its line (the path is then a straight line).
+                    if fit:
+                        n, along, stop_m = fit
+                        row["route"] = {
+                            "service": service_no,
+                            "pattern": n,
+                            "along": round(along),
+                            "stop_m": round(stop_m),
+                        }
                 if bus["lat"] is not None and origin is not None:
                     row["distance"] = format_distance(
                         haversine_m(*origin, bus["lat"], bus["lon"])
@@ -1050,6 +1074,42 @@ def stop_list():
     and the function itself is rarely asked.
     """
     response = make_response({"stops": STOP_LIST})
+    response.headers["Cache-Control"] = "public, max-age=86400"
+    return response
+
+
+@app.route("/route.json")
+def route_json():
+    """One service's road line and its stops, for drawing a tapped bus's route.
+
+    {"line": [[lat, lon, metres], ...], "stops": [[code, name, lat, lon, metres], ...]}
+    with metres measured along the line from its start, so the browser can
+    split it at the bus and at the stop without any geometry of its own.
+    Static for the life of the bake, so cached for a day like /stops.json.
+    """
+    service = request.args.get("service", "")
+    patterns = BUS_ROUTES.get(service)
+    try:
+        n = int(request.args.get("pattern", ""))
+    except ValueError:
+        n = -1
+    if not isinstance(patterns, list) or not 0 <= n < len(patterns):
+        return {"error": "unknown service or pattern"}, 404
+    points, metres = route_line(service, n)
+    stops = []
+    for code, stop_m in patterns[n]["stops"]:
+        position = baked_position(code)
+        if position is None or stop_m is None:
+            continue
+        stops.append(
+            [code, stop_name(code), round(position[0], 5), round(position[1], 5), round(stop_m)]
+        )
+    response = make_response(
+        {
+            "line": [[round(p[0], 5), round(p[1], 5), round(m)] for p, m in zip(points, metres)],
+            "stops": stops,
+        }
+    )
     response.headers["Cache-Control"] = "public, max-age=86400"
     return response
 
