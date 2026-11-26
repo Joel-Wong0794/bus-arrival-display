@@ -180,6 +180,8 @@
       // whole island until the phone says where it is.
       var PLACES = {{ places | tojson }};
       var PLACE_POINTS = PLACES.map(function (p) { return L.latLng(p.lat, p.lon); });
+      // How old a fix is on average when a poll first sees it (Glide.fixAgeS).
+      var FIX_AGE_MS = Glide.fixAgeS({{ refresh_seconds | int }}) * 1000;
 
       var map = L.map("map", { zoomControl: false });
       L.control.zoom({ position: "topright" }).addTo(map); // the bottom edge is the bus card's
@@ -388,17 +390,22 @@
           return;
         }
 
-        // Pin is ahead of the fix (gap < 0) by a little: hold and let the
-        // shadow catch up. Behind it a little: the tick loop eases forward,
-        // drawing the pin on the path's one point before the fix. Either way,
-        // too far off and we jump straight to the truth.
-        var gap = old ? marker._left - d0 : 0;
+        // The fix is already FIX_AGE_MS old (see Glide.fixAgeS), so the
+        // shadow starts from when the bus was there, not from now. By now it
+        // has driven on: that is where the bus most likely is.
+        var t0 = now - FIX_AGE_MS;
+        var likelyLeft = d0 - Glide.shadowTravelled(d0, t0, arrival, now);
+
+        // Pin is ahead of where the bus likely is (gap < 0) by a little: hold
+        // and let the shadow catch up. Behind it a little: the tick loop eases
+        // forward. Either way, too far off and we jump straight there.
+        var gap = old ? marker._left - likelyLeft : 0;
         if (!old || Glide.onNewFix(gap) === "snap") {
-          marker._left = d0;
+          marker._left = likelyLeft;
           // Metre 0 of the path is the fix projected onto the road line (or
           // the fix itself on a straight-line fallback), so the pin lands on
           // the road rather than a few metres off it where GPS put it.
-          marker.setLatLng(Glide.pointAt(path, 0));
+          marker.setLatLng(Glide.pointAt(path, d0 - likelyLeft));
         } else {
           // Thread the new path through where the pin is drawn right now, so
           // it carries on from exactly there instead of sliding sideways onto
@@ -430,7 +437,7 @@
           marker._left = d0 - pinM;
         }
 
-        marker._glide = { path: path, from: fix, stop: stop, d0: d0, t0: now, tA: arrival };
+        marker._glide = { path: path, from: fix, stop: stop, d0: d0, t0: t0, tA: arrival };
       }
 
       function syncMarkers() {

@@ -40,6 +40,30 @@ var Glide = (function () {
   var SNAP_BEHIND_M = 600;
   var SNAP_AHEAD_M = 1500;
 
+  // A fix is old before we see it. Measured on DataMall (Nov 2026), a bus's
+  // position changes every 12-37 s, occasionally ~60 s, and the page only
+  // polls every REFRESH_SECONDS. Treating the fix as "now" started every
+  // shadow from where the bus *was*, so pins ran 150-300 m behind the real
+  // bus. LTA_LAG_S is how stale a fix already is when LTA publishes it: an
+  // estimate, not a measured figure — tune it against buses on the ground.
+  var LTA_LAG_S = 5;
+
+  // Ceiling on the age estimate. A slow poll (REFRESH_SECONDS set high) would
+  // otherwise start every shadow minutes back and draw pins far ahead of any
+  // fix. 30 s is half the slowest gap seen between DataMall fixes (~60 s).
+  var MAX_FIX_AGE_S = 30;
+
+  /**
+   * Estimated age, in seconds, of a fix first seen on a poll. LTA's own lag,
+   * plus half a poll interval: the fix landed at some point since the last
+   * poll, on average halfway through. A missing or nonsense interval counts
+   * only LTA's part; the total never exceeds MAX_FIX_AGE_S.
+   */
+  function fixAgeS(refreshS) {
+    var poll = refreshS > 0 ? refreshS / 2 : 0;
+    return Math.min(MAX_FIX_AGE_S, LTA_LAG_S + poll);
+  }
+
   // Seconds the visible pin takes to close most of its gap to the shadow, so a
   // corrected fix is a quick slide rather than a jerk.
   var CATCHUP_S = 2;
@@ -118,6 +142,9 @@ var Glide = (function () {
 
   return {
     HOLD_M: HOLD_M,
+    LTA_LAG_S: LTA_LAG_S,
+    MAX_FIX_AGE_S: MAX_FIX_AGE_S,
+    fixAgeS: fixAgeS,
     MAX_SPEED_MPS: MAX_SPEED_MPS,
     SNAP_BEHIND_M: SNAP_BEHIND_M,
     SNAP_AHEAD_M: SNAP_AHEAD_M,
