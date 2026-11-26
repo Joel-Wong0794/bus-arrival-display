@@ -24,9 +24,12 @@
 // (scripts/test_glide.js) and keeps map.html responsible for drawing.
 
 var Glide = (function () {
-  // Stay this far short of the stop until a real fix says the bus is closer.
-  // Without it the pin would "arrive" on a guess while the bus is still a
-  // junction away — running ahead of LTA is worse than lagging behind it.
+  // Stay this far short of the stop until a real fix says the bus is closer,
+  // or until LTA's own arrival time comes. Without it the pin would "arrive"
+  // on a guess while the bus is still a junction away. But fixes come only
+  // every 12-60 s, so holding until one lands left pins parked short while
+  // the real bus pulled in (field test, 26 Nov 2026): once LTA says the bus
+  // is due, it is assumed in.
   var HOLD_M = 80;
 
   // Ceiling on shadow speed: 60 km/h, the top of normal bus driving here.
@@ -77,11 +80,12 @@ var Glide = (function () {
    * now epoch ms
    *
    * Pace is LTA's: cover d0 in (tA - t0). Then two limits: never faster than
-   * MAX_SPEED_MPS, and never into the last HOLD_M — unless the fix already
-   * was inside HOLD_M, in which case the bus really is pulling in.
+   * MAX_SPEED_MPS, and never into the last HOLD_M before tA — unless the fix
+   * already was inside HOLD_M, in which case the bus really is pulling in.
+   * From tA on the hold lifts and the shadow drives onto the stop.
    */
   function shadowTravelled(d0, t0, tA, now) {
-    var hold = d0 > HOLD_M ? HOLD_M : 0;
+    var hold = d0 > HOLD_M && now < tA ? HOLD_M : 0;
     var room = Math.max(0, d0 - hold);
     var elapsedS = Math.max(0, now - t0) / 1000;
     var budgetS = (tA - t0) / 1000;

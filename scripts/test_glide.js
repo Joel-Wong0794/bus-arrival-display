@@ -13,8 +13,14 @@ assert.equal(Glide.shadowTravelled(600, T0, s(120), s(60)), 300);
 // Nothing travelled before the fix was anchored.
 assert.equal(Glide.shadowTravelled(600, T0, s(120), s(-5)), 0);
 
-// Holds 80m short of the stop, even once the ETA has passed.
-assert.equal(Glide.shadowTravelled(600, T0, s(120), s(500)), 600 - Glide.HOLD_M);
+// Before LTA's arrival time: hold 80 m short of the stop.
+assert.equal(Glide.shadowTravelled(600, T0, s(120), s(119)), 600 - Glide.HOLD_M);
+// From LTA's arrival time on, the bus is assumed in: drive onto the stop.
+assert.equal(Glide.shadowTravelled(600, T0, s(120), s(120)), 600);
+assert.equal(Glide.shadowTravelled(600, T0, s(120), s(500)), 600);
+// ETA already due at the fix: reaches the stop, but only at 60 km/h.
+assert.equal(Glide.shadowTravelled(1000, T0, s(-5), s(10)), Glide.MAX_SPEED_MPS * 10);
+assert.equal(Glide.shadowTravelled(1000, T0, s(-5), s(100)), 1000);
 
 // A fix already inside 80m is the bus pulling in: let it reach the stop.
 assert.equal(Glide.shadowTravelled(50, T0, s(10), s(60)), 50);
