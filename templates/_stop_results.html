@@ -3,7 +3,12 @@
   {% for stop in results %}
   <li>
     <a href="/map?stop={{ stop.code }}">
-      <span class="stop-result-name">{{ stop.name }}</span>
+      {# Name, then the road beneath it: names repeat across the island
+         ("Blk 402" is three stops), and the road is what tells them apart. #}
+      <span class="stop-result-text">
+        <span class="stop-result-name">{{ stop.name }}</span>
+        {% if stop.road %}<span class="stop-result-road">{{ stop.road }}</span>{% endif %}
+      </span>
       <span class="stop-result-code">{{ stop.code }}</span>
     </a>
   </li>

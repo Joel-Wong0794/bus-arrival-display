@@ -1,6 +1,40 @@
-/* Phone-first companion to the kiosk display. Kept separate from style.css so
-   the dashboard's full-height, overflow-hidden layout can't leak into a page
-   that needs to scroll. */
+/* Bus map, V2. One page, phone-first.
+
+   Direction: night transit signage. The map is OneMap's Night tiles, so the
+   page is the same deep blue-black and sits around it rather than framing it.
+   Two signals carry all the meaning — amber for "on the way", red for
+   "arriving" — the colours of the LED panels at Singapore bus stops. Service
+   numbers are set as plates in Barlow Condensed, a typeface drawn from road
+   signage. Flat: no gradients, shadows only where something floats over the
+   map and has to separate from it.
+
+   Every colour is a token here; nothing below uses a raw hex except the stop
+   signs, which copy the real signs' grey. */
+
+:root {
+  --ink: #0b1016;          /* page */
+  --panel: #121a23;        /* cards, rows */
+  --panel-2: #19232f;      /* raised: inputs, chips, pressed rows */
+  --line: #24313f;         /* hairlines */
+  --text: #e9eef4;
+  --muted: #9aa8b8;        /* 7.4:1 on --panel */
+  --faint: #7a8a9d;        /* 4.9:1 on --ink: notes, timestamps */
+  --amber: #ffb627;        /* on the way */
+  --red: #ff5d4f;          /* arriving */
+  --cyan: #5fd4e8;         /* your stops: rings, current chip */
+  --blue: #5b9dff;         /* you */
+  --on-signal: #0b1016;    /* text on amber/red/cyan fills */
+
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "Barlow", "Segoe UI", Arial, sans-serif;
+
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --gap: 12px;
+  --tap: 44px;             /* minimum touch target */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
 
 * {
   box-sizing: border-box;
@@ -8,30 +42,24 @@
   padding: 0;
 }
 
+html { -webkit-text-size-adjust: 100%; }
+
 body {
-  background: #111;
-  color: #f5f5f5;
-  font-family: "Segoe UI", Arial, sans-serif;
-  padding: 12px;
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.4;
+  padding: 12px max(12px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
 }
 
-.map-header {
-  display: flex;
-  /* Centred, not baseline: the weather block is now an icon beside two lines
-     of text, and a baseline would hang the icon off the first of them. */
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
+a { color: inherit; }
+
+:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
 }
 
-.map-header h1 {
-  font-size: 1.3rem;
-  color: #7fd3ff;
-}
-
-/* Kept in the document for screen readers and the heading outline, but out of
-   the visible layout, which the weather now occupies. */
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -45,215 +73,423 @@ body {
   white-space: nowrap;
 }
 
-.wx {
+/* ---- Header ------------------------------------------------------------- */
+
+.top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--gap);
+  margin-bottom: 12px;
+}
+
+.top-title { min-width: 0; }
+
+.eyebrow {
+  font-family: var(--display);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* The road, in the same quiet label as the code: it answers "which Blk 402"
+   without competing with the name below it. */
+.eyebrow-road { letter-spacing: 0.06em; }
+
+.title-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
-/* The SVG carries its own SMIL animation, which plays inside an <img> without
-   any script. Fixed box so the header height doesn't jump between forecasts. */
-.wx-icon {
-  width: 46px;
-  height: 46px;
+.top h1 {
+  font-family: var(--display);
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: 0.005em;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+/* Save / Saved. A labelled button, not a bare icon: what the star does should
+   never need a guess. The pill is 36px; ::after widens the tap area to 44. */
+.star {
+  position: relative;
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font: 600 0.85rem var(--body);
+  cursor: pointer;
+  transition: background 160ms var(--ease), color 160ms var(--ease), border-color 160ms var(--ease);
+}
+
+.star::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+}
+
+.star svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+  transition: transform 220ms var(--ease);
+}
+
+.star[aria-pressed="true"] {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--on-signal);
+}
+
+.star[aria-pressed="true"] svg {
+  fill: currentColor;
+  transform: scale(1.08);
+}
+
+.wx {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.wx-icon {
+  width: 40px;
+  height: 40px;
 }
 
 .wx-words {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  min-width: 0;
+  align-items: flex-end;
+  text-align: right;
 }
 
-/* 1.15rem, not the 1.3rem the old title used: NEA's vocabulary runs to
-   "Heavy Thundery Showers with Gusty Winds", and this keeps 22 of its 23
-   values on a single line at 360px. The one that still wraps is too long to
-   fit at any size worth reading. */
+.wx-temp {
+  font-family: var(--display);
+  font-size: 1.35rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* NEA's longest phrase runs to six words; cap it so it never crowds the title. */
 .wx-text {
-  font-size: 1.15rem;
-  color: #7fd3ff;
-  line-height: 1.15;
+  max-width: 9.5rem;
+  font-size: 0.75rem;
+  color: var(--faint);
+  line-height: 1.2;
 }
 
-/* Temperature and the window it applies to: useful once you've read the
-   forecast, never competing with it. */
-.wx-meta {
-  font-size: 0.72rem;
-  color: #6f6f6f;
-}
+/* ---- Search ------------------------------------------------------------- */
 
-.map-back {
-  color: #888;
-  font-size: 0.9rem;
-  text-decoration: none;
-}
-
-.stop-picker {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.stop-picker select {
-  flex: 1;
-  min-width: 0;
-  font: inherit;
-  font-size: 0.9rem;
-  color: #f5f5f5;
-  background: #252525;
-  border: 1px solid #333;
-  border-radius: 8px;
-  padding: 9px 11px;
-}
-
-.stop-picker select:focus-visible {
-  outline: 2px solid #7fd3ff;
-  outline-offset: 2px;
-}
-
-/* Leaflet puts its control corners at z-index 1000, so the results panel has to
-   clear that or the zoom buttons punch through it. Raising the whole control
-   rather than the panel alone means one stacking context to reason about. */
+/* Leaflet puts its control corners at z-index 1000, so the results panel has
+   to clear that or the zoom buttons punch through it. */
 .stop-search {
   position: relative;
   z-index: 1100;
   margin-bottom: 10px;
 }
 
-.stop-search input {
-  width: 100%;
-  font: inherit;
-  font-size: 0.9rem;
-  color: #f5f5f5;
-  background: #1c1c1c;
-  border: 1px solid #333;
-  border-radius: 8px;
-  padding: 9px 11px;
+.search-icon {
+  position: absolute;
+  left: 13px;
+  top: 22px;
+  width: 18px;
+  height: 18px;
+  transform: translateY(-50%);
+  fill: none;
+  stroke: var(--faint);
+  stroke-width: 2;
+  stroke-linecap: round;
+  pointer-events: none;
 }
 
-.stop-search input::placeholder { color: #666; }
+.stop-search input {
+  width: 100%;
+  min-height: var(--tap);
+  /* 16px: anything smaller and iOS zooms the page when the field is focused. */
+  font: 16px var(--body);
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 10px 12px 10px 40px;
+  transition: border-color 160ms var(--ease), background 160ms var(--ease);
+}
 
-.stop-search input:focus-visible {
-  outline: 2px solid #7fd3ff;
-  outline-offset: 2px;
+.stop-search input::placeholder { color: var(--faint); }
+
+.stop-search input:focus {
+  background: var(--panel-2);
+  border-color: var(--cyan);
+  outline: none;
 }
 
 /* Floats over the map rather than pushing it down, so results appearing as you
    type don't shove the page around under your thumb. */
-.stop-results {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(100% + 4px);
-  max-height: 44vh;
-  overflow-y: auto;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  background: #1c1c1c;
-  border: 1px solid #333;
-  border-radius: 8px;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.6);
-}
-
-.stop-results li + li { border-top: 1px solid #2a2a2a; }
-
-.stop-results a {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 12px;
-  color: #f5f5f5;
-  text-decoration: none;
-  font-size: 0.9rem;
-}
-
-.stop-results a:hover,
-.stop-results a:focus-visible {
-  background: #252525;
-  outline: none;
-}
-
-.stop-result-code {
-  color: #8b8b8b;
-  font-size: 0.78rem;
-  flex: none;
-}
-
+.stop-results,
 .stop-none {
   position: absolute;
   left: 0;
   right: 0;
-  top: calc(100% + 4px);
-  margin: 0;
-  padding: 10px 12px;
-  background: #1c1c1c;
-  border: 1px solid #333;
-  border-radius: 8px;
-  color: #8b8b8b;
-  font-size: 0.85rem;
+  top: calc(100% + 6px);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.55);
 }
+
+.stop-results {
+  max-height: 46vh;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.stop-results li + li { border-top: 1px solid var(--line); }
+
+.stop-results a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: var(--tap);
+  padding: 10px 14px;
+  text-decoration: none;
+}
+
+.stop-results a:hover,
+.stop-results a:focus-visible {
+  background: var(--panel);
+  outline: none;
+}
+
+.stop-result-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.stop-result-road {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.stop-result-code {
+  flex: none;
+  font-family: var(--display);
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+}
+
+.stop-none {
+  padding: 12px 14px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* ---- Chips -------------------------------------------------------------- */
+
+/* One row that scrolls sideways: six saved stops never push the map down. */
+.chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin: 0 -12px 12px;
+  padding: 2px 12px;
+  scroll-padding: 0 12px;
+}
+
+.chips::-webkit-scrollbar { display: none; }
+
+.chips:empty { display: none; }
+
+.chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  max-width: 14rem;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 160ms var(--ease), color 160ms var(--ease), border-color 160ms var(--ease);
+}
+
+.chip:hover { color: var(--text); border-color: var(--faint); }
+
+.chip[aria-current="page"] {
+  background: var(--cyan);
+  border-color: var(--cyan);
+  color: var(--on-signal);
+  font-weight: 600;
+}
+
+/* Small marks, so the two special chips read differently from a stop name. */
+.chip-near::before,
+.chip-all::before {
+  content: "";
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.chip-near::before { border: 2px solid currentColor; }
+.chip-all::before { background: var(--amber); }
+.chip-all[aria-current="page"]::before { background: var(--on-signal); }
+
+/* ---- Start screen ------------------------------------------------------- */
+
+.start {
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--cyan);
+  border-radius: var(--r-md);
+  background: var(--panel);
+}
+
+.start-title {
+  font-family: var(--display);
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.start-body {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.btn {
+  margin-top: 12px;
+  min-height: var(--tap);
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--cyan);
+  color: var(--on-signal);
+  font: 600 0.95rem var(--body);
+  cursor: pointer;
+}
+
+.btn[hidden] { display: none; }
+
+/* ---- Map ---------------------------------------------------------------- */
+
+.map-wrap { position: relative; }
 
 .map-frame {
   height: 55vh;
   min-height: 280px;
-  border-radius: 12px;
+  border-radius: var(--r-lg);
   overflow: hidden;
-  border: 1px solid #333;
-  /* Unreachable tiles otherwise leave Leaflet's own light grey showing, which
-     reads as broken against the dark page. */
-  background: #1c1c1c;
+  border: 1px solid var(--line);
+  /* Unreachable tiles otherwise leave Leaflet's own light grey showing. */
+  background: var(--panel);
 }
 
-/* The point of the whole exercise: the service number, legible without a tap. */
+/* What the map is showing, in words — over its top-left corner. */
+.map-status {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 800;
+  max-width: calc(100% - 20px);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(11, 16, 22, 0.88);
+  border: 1px solid var(--line);
+  font-size: 0.85rem;
+  font-weight: 500;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.map-status[hidden] { display: none; }
+
+.map-status::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.map-status.live::before { background: var(--amber); }
+
+/* Bus pins: the service number on a plate, legible without a tap. */
 .bus-pin {
   display: inline-block;
   transform: translate(-50%, -50%);
-  padding: 3px 8px;
-  border-radius: 20px;
-  font-family: "Segoe UI", Arial, sans-serif;
-  font-size: 0.82rem;
-  font-weight: bold;
-  color: #111;
+  min-width: 34px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 2px solid var(--ink);
+  font-family: var(--display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.15;
+  text-align: center;
+  color: var(--on-signal);
   white-space: nowrap;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
 }
 
-.bus-pin.arriving { background: #ff5a5a; }
-.bus-pin.soon { background: #ffd166; }
+.bus-pin.arriving { background: var(--red); }
+.bus-pin.soon { background: var(--amber); }
 
-.home-pin {
-  border-radius: 50%;
-  background: #7fd3ff;
-  border: 3px solid #111;
-  box-shadow: 0 0 0 4px rgba(127, 211, 255, 0.25);
-}
-
-/* The stop you went looking for: a ring, so it reads as a place on the map
-   rather than as another vehicle, and is never mistaken for the home dot. */
+/* Your stop(s): a ring, so it reads as a place, never as another vehicle. */
 .stop-pin {
   border-radius: 50%;
-  background: #111;
-  border: 4px solid #7fd3ff;
-  box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.9), 0 0 0 6px rgba(127, 211, 255, 0.3);
+  background: var(--ink);
+  border: 4px solid var(--cyan);
+  box-shadow: 0 0 0 3px rgba(11, 16, 22, 0.9), 0 0 0 7px rgba(95, 212, 232, 0.28);
 }
 
-/* You, from the phone's GPS: a white-rimmed blue dot like a maps app's own,
-   a different blue from home and the stop so the two are never confused. */
+/* You, from the phone's GPS: a white-rimmed blue dot like a maps app's own. */
 .you-pin {
   border-radius: 50%;
-  background: #4d8dff;
-  border: 2px solid #fff;
-  box-shadow: 0 0 0 4px rgba(77, 141, 255, 0.3);
+  background: var(--blue);
+  border: 2px solid var(--text);
+  box-shadow: 0 0 0 4px rgba(91, 157, 255, 0.3);
 }
 
-/* A tappable bus stop: a small "bus stop sign" (grey rounded square with a
-   bus glyph) centred in an invisible 32px box. The box is the tap area, sized
-   for a finger; only the 16px face is drawn. Square on purpose: every other
-   place marker (you, home, the chosen stop) is a circle. */
+/* A tappable bus stop: a small grey "stop sign" inside an invisible 32px box,
+   which is the tap area. Square on purpose: every other place marker is round. */
 .stop-sign {
   display: flex;
   align-items: center;
@@ -271,227 +507,359 @@ body {
   background: #d9dde2;
   color: #1b1f24;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
-  opacity: 0.85;
+  opacity: 0.8;
+  transition: opacity 160ms var(--ease), transform 160ms var(--ease);
 }
 
 .stop-sign-face svg { width: 12px; height: 12px; }
 
-.stop-sign:hover .stop-sign-face { opacity: 1; }
+.stop-sign:hover .stop-sign-face { opacity: 1; transform: scale(1.12); }
 
 /* Leaflet's chrome ships light; repaint it for the dark page. */
-.leaflet-container { background: #1c1c1c; }
+.leaflet-container {
+  background: var(--panel);
+  font-family: var(--body);
+}
 
 .leaflet-popup-content-wrapper,
 .leaflet-popup-tip {
-  background: #252525;
-  color: #f5f5f5;
+  background: var(--panel-2);
+  color: var(--text);
 }
 
-.leaflet-popup-content { font-size: 0.85rem; line-height: 1.5; }
+.leaflet-popup-content-wrapper {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
 
-/* Popup on a tapped stop sign: name, code, then the one thing to do. */
+.leaflet-popup-content {
+  margin: 12px 14px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.leaflet-container a.leaflet-popup-close-button { color: var(--faint); }
+
 .stop-popup-code {
-  color: #8b8b8b;
-  font-size: 0.78rem;
+  color: var(--faint);
+  font-size: 0.8rem;
 }
 
-/* A thumb-sized button, not a text link: it is the popup's only action. */
 .leaflet-popup-content a.stop-go {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
   margin-top: 8px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: #7fd3ff;
-  color: #111;
+  padding: 0 14px;
+  border-radius: var(--r-sm);
+  background: var(--cyan);
+  color: var(--on-signal);
   font-weight: 600;
-  text-align: center;
   text-decoration: none;
 }
 
 .leaflet-popup-content a.stop-go:focus-visible {
-  outline: 2px solid #f5f5f5;
+  outline: 2px solid var(--text);
   outline-offset: 2px;
 }
 
 .leaflet-control-attribution {
-  background: rgba(17, 17, 17, 0.8) !important;
-  color: #888 !important;
+  background: rgba(11, 16, 22, 0.8) !important;
+  color: var(--faint) !important;
   font-size: 0.62rem;
 }
 
-.leaflet-control-attribution a { color: #7fd3ff; }
+.leaflet-control-attribution a { color: var(--cyan); }
 
-.leaflet-bar a {
-  background: #252525;
-  color: #f5f5f5;
-  border-bottom-color: #333;
+.leaflet-touch .leaflet-bar,
+.leaflet-bar {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  overflow: hidden;
 }
 
-.leaflet-bar a:hover { background: #2f2f2f; }
+.leaflet-touch .leaflet-bar a,
+.leaflet-bar a {
+  width: 36px;
+  height: 36px;
+  line-height: 36px;
+  background: var(--panel-2);
+  color: var(--text);
+  border-bottom-color: var(--line);
+}
+
+.leaflet-bar a:hover { background: var(--panel); color: var(--text); }
+
+/* ---- Bus list ----------------------------------------------------------- */
+
+.list-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: 18px 2px 10px;
+}
+
+.list-title {
+  font-family: var(--display);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
 
 .map-updated {
-  color: #555;
-  font-size: 0.78rem;
-  padding: 10px 2px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--faint);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A slow breath, so "live" is shown rather than claimed. */
+.pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--amber);
+  animation: breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
 }
 
 .bus-list {
   list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .bus-row {
   display: grid;
-  /* Fixed first track, not auto: every row is its own grid container, so an
-     auto track is sized per row and lands each ETA at a different x. 4rem
-     clears the longest real service number ("961M", 60px at this weight); a
-     longer one would spill into the gap rather than shift the ETA, which is
-     the failure mode we want. */
-  /* The ETA track has a floor so it can't be starved by a long destination on a
-     narrow phone — the context column wraps to a second line instead. Priority
-     order: the ETA never wraps, the text explaining it may. */
-  grid-template-columns: 4rem minmax(5.5rem, 1fr) auto;
+  /* Fixed plate column, so every row's text starts at the same x. 4.25rem
+     clears the longest real service number ("961M") at plate size. */
+  grid-template-columns: 4.25rem minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  padding: 10px 12px;
-  background: #252525;
-  border: 1px solid #333;
-  border-left-width: 4px;
-  border-radius: 8px;
-  margin-bottom: 8px;
+  min-height: 64px;
+  padding: 10px 14px 10px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  transition: background 140ms var(--ease), transform 140ms var(--ease), border-color 140ms var(--ease);
 }
-
-.bus-row.arriving { border-left-color: #ff5a5a; }
-.bus-row.soon { border-left-color: #ffd166; }
 
 /* Only a bus with a position has a pin to open. */
 .bus-row[data-lat] { cursor: pointer; }
-.bus-row[data-lat]:active { background: #2f2f2f; }
+.bus-row[data-lat]:hover { border-color: var(--faint); }
+.bus-row[data-lat]:active { background: var(--panel-2); transform: scale(0.99); }
 
-.bus-row[data-lat]:focus-visible {
-  outline: 2px solid #7fd3ff;
-  outline-offset: 2px;
-}
-
-.bus-no {
-  font-size: 1.4rem;
-  font-weight: bold;
+/* The route plate, filled with the signal colour so the row's state is the
+   first thing seen — and repeated as a word ("Arr") in the ETA column. */
+.plate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 42px;
+  border-radius: var(--r-sm);
+  font-family: var(--display);
+  font-size: 1.45rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--on-signal);
   white-space: nowrap;
 }
 
-.bus-meta {
+.bus-row.soon .plate { background: var(--amber); }
+.bus-row.arriving .plate { background: var(--red); }
+
+.bus-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
+  min-width: 0;
 }
 
-.bus-eta {
-  font-size: 1.1rem;
-  font-weight: bold;
+.bus-dest {
+  font-weight: 600;
+  font-size: 0.98rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.bus-row.arriving .bus-eta { color: #ff5a5a; }
-.bus-row.soon .bus-eta { color: #ffd166; }
-
-.bus-where {
-  font-size: 0.78rem;
-  color: #8b8b8b;
+.bus-sub {
+  font-size: 0.82rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* The context column: where it stops, then where it's heading. Both answer
-   "is this my bus" — neither competes with the ETA for attention. */
-.bus-stop {
+/* The countdown: the reason the row exists. */
+.eta {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 0.78rem;
-  color: #8b8b8b;
-  text-align: right;
+  align-items: baseline;
+  gap: 3px;
+  font-family: var(--display);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.bus-destination {
-  color: #6f6f6f;
+.eta-num {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--amber);
+}
+
+.eta-unit {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.bus-row.arriving .eta-num {
+  color: var(--red);
+  font-size: 1.6rem;
+  letter-spacing: 0.02em;
 }
 
 .bus-empty {
-  padding: 14px 12px;
-  background: #1c1c1c;
-  border: 1px solid #333;
-  border-radius: 8px;
-  color: #888;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-md);
+}
+
+.empty-title {
+  font-family: var(--display);
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.empty-body {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.empty-body strong,
+.bus-later strong {
+  font-family: var(--display);
+  font-weight: 700;
+  color: var(--amber);
 }
 
 .bus-note,
 .bus-later {
-  font-size: 0.8rem;
-  color: #666;
-  padding: 6px 2px 0;
+  font-size: 0.85rem;
+  color: var(--faint);
+  padding: 10px 2px 0;
 }
 
-.map-legend {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  font-size: 0.76rem;
-  color: #666;
-  padding: 16px 2px 0;
-}
+/* ---- LTA vs actual ------------------------------------------------------ */
 
-.dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  display: inline-block;
-}
-
-.dot.arriving { background: #ff5a5a; }
-.dot.soon { background: #ffd166; }
-.dot.home { background: #7fd3ff; }
-.dot.you { background: #4d8dff; box-shadow: 0 0 0 2px #fff inset; }
-
-.dot.stop {
-  background: transparent;
-  border: 3px solid #7fd3ff;
-  width: 11px;
-  height: 11px;
-}
-
-/* The legend's copy of the tappable stop sign: square, like the one on the map. */
-.dot.pick {
-  border-radius: 2px;
-  background: #d9dde2;
-}
-
-.dot + .dot { margin-left: 10px; }
-
-/* "LTA vs actual" readout, filled by renderAccuracy() in map.html. Quiet
-   like the notes above it: it is for the second glance, not the first. */
+/* For the second glance, not the first: quiet like the notes above it. */
 .accuracy {
-  margin-top: 14px;
-  padding: 10px 12px;
-  background: #1c1c1c;
-  border: 1px solid #333;
-  border-radius: 8px;
-  font-size: 0.8rem;
-  color: #aaa;
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  font-size: 0.85rem;
+  color: var(--muted);
 }
+
+.accuracy[hidden] { display: none; }
 
 .accuracy-title {
   margin: 0 0 4px;
+  font-family: var(--display);
   font-size: 0.85rem;
   font-weight: 600;
-  color: #ddd;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text);
 }
 
 .accuracy-summary { margin: 0 0 6px; }
 
-.accuracy-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.accuracy-list { list-style: none; }
+
+.accuracy-list li { padding: 4px 0; overflow-wrap: anywhere; }
+.accuracy-list li + li { border-top: 1px solid var(--line); }
+.accuracy-list li.late { color: var(--amber); }
+.accuracy-list li.early { color: var(--red); }
+
+/* ---- Legend ------------------------------------------------------------- */
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding: 18px 2px 0;
+  font-size: 0.8rem;
+  color: var(--faint);
 }
 
-.accuracy-list li { padding: 3px 0; overflow-wrap: anywhere; }
-.accuracy-list li + li { border-top: 1px solid #2a2a2a; }
-.accuracy-list li.late { color: #ffd166; }
-.accuracy-list li.early { color: #ff5a5a; }
+.legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend > span[hidden] { display: none; }
+
+.key {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.key.arriving { background: var(--red); }
+.key.soon { background: var(--amber); }
+.key.place { border: 3px solid var(--cyan); border-radius: 50%; }
+.key.you { background: var(--blue); border-radius: 50%; box-shadow: 0 0 0 2px var(--text) inset; }
+.key.pick { background: #d9dde2; }
+
+/* ---- Toast -------------------------------------------------------------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: max(20px, env(safe-area-inset-bottom));
+  z-index: 2000;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 600;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(-50%, 12px);
+  transition: opacity 180ms var(--ease), transform 220ms var(--ease);
+  pointer-events: none;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
