@@ -792,12 +792,14 @@
           var marker = markers[key];
           var g = marker._glide;
           if (!g) continue;
-          var shadowLeft = g.d0 - Glide.shadowTravelled(g.d0, g.t0, g.tA, now);
-          // Never reverse: if the shadow is behind the pin (a fresh fix landed
+          // Aim a little ahead of the shadow (Glide.aimTravelled): easing
+          // straight at it left every moving pin ~2 s of driving behind.
+          var aimLeft = g.d0 - Glide.aimTravelled(g.d0, g.t0, g.tA, now);
+          // Never reverse: if the aim is behind the pin (a fresh fix landed
           // a little short), the pin waits for it rather than backing up.
-          // easeStep returns 0 when the shadow is behind, and caps catch-up
+          // easeStep returns 0 when the aim is behind, and caps catch-up
           // at 90 km/h when a fresh fix lands well ahead of the pin.
-          marker._left -= Glide.easeStep(marker._left - shadowLeft, dt);
+          marker._left -= Glide.easeStep(marker._left - aimLeft, dt);
           // anchor() threads each new path through the pin, so this is always
           // a step along the road from where the pin already is.
           marker.setLatLng(Glide.pointAt(g.path, g.d0 - marker._left));
