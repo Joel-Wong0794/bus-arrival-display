@@ -22,7 +22,7 @@ assert len(index.valid_stop_codes(codes)) == index.MAX_FAVOURITES
 calls = []
 
 
-def fake_arrival(api_key, code, now):
+async def fake_arrival(api_key, code, now):
     calls.append(code)
     minutes = {"84009": 2, "11119": 9}.get(code)
     if minutes is None:
@@ -35,8 +35,19 @@ def fake_arrival(api_key, code, now):
     return [("10" if code == "84009" else "20", [bus])]
 
 
+async def no_weather(now, place=None):
+    return None
+
+
+async def fair_weather(now, place=None):
+    return {
+        "text": "Fair", "icon": "clear-day", "area": None, "now": None, "low": 25,
+        "high": 34, "region": "west", "period": "", "outlook": "",
+    }
+
+
 index.get_bus_arrival = fake_arrival
-index.read_weather = lambda now, place=None: None
+index.read_weather = no_weather
 client = TestClient(index.app)
 
 # Start screen: no stop asked for, so no DataMall call and no bus list poll.
@@ -68,12 +79,9 @@ assert 'src="/static/glide.js"' in page and 'href="/static/map.css"' in page
 assert 'hx-get="/map-list?stop=84009"' in page
 
 # The weather icon is a static file too, in a subfolder.
-index.read_weather = lambda now, place=None: {
-    "text": "Fair", "icon": "clear-day", "area": None, "now": None, "low": 25,
-    "high": 34, "region": "west", "period": "", "outlook": "",
-}
+index.read_weather = fair_weather
 assert 'src="/static/weather/clear-day.svg"' in client.get("/map?stop=84009").text
-index.read_weather = lambda now, place=None: None
+index.read_weather = no_weather
 
 # Static files: same paths, subfolders included, nothing outside static/.
 assert client.get("/static/glide.js").status_code == 200

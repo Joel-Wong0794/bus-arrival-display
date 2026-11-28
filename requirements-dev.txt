@@ -1,4 +1,4 @@
 # Local development and tests only; Vercel installs requirements.txt alone.
 -r requirements.txt
-httpx2~=2.16     # FastAPI's TestClient is built on it
+requests         # the offline bake scripts, scripts/fetch_bus_*.py
 uvicorn~=0.54    # runs the app locally: uvicorn index:app --app-dir api --reload

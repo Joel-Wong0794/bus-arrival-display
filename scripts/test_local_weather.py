@@ -5,6 +5,7 @@ like the live ones (two areas, a few stations). The module needs API_KEY and
 BUS_STOP_CODES only to import, so dummies are set first.
 """
 
+import asyncio
 import os
 import pathlib
 import sys
@@ -49,34 +50,38 @@ TEMPS = {
     "readings": [{"data": [{"stationId": "N1", "value": 27.6}, {"stationId": "E1", "value": 31.2}]}],
 }
 feeds = {index.WEATHER_URL: DAY, index.NOWCAST_URL: NOWCAST, index.TEMPERATURE_URL: TEMPS}
-index.fetch_feed = lambda url, now, ttl: feeds.get(url)
+async def fake_feed(url, now, ttl):
+    return feeds.get(url)
+
+
+index.fetch_feed = fake_feed
 
 # Each place gets its own area's forecast and its nearest station's reading.
-north = index.read_weather(NOW, NORTH)
+north = asyncio.run(index.read_weather(NOW, NORTH))
 assert (north["text"], north["area"], north["now"]) == ("Thundery Showers", "Woodlands", 28), north
 assert north["icon"] == "thunderstorms-rain" and (north["low"], north["high"]) == (25, 34), north
-east = index.read_weather(NOW, EAST)
+east = asyncio.run(index.read_weather(NOW, EAST))
 # E2 is closer but sent no reading, so E1 answers rather than nothing.
 assert (east["text"], east["area"], east["now"]) == ("Fair", "Bedok", 31), east
 # "(Day)" leaves the words but still picks the sun icon.
 assert east["icon"] == "clear-day", east
 
 # No place (a stop without coordinates): the 24-hour regional forecast, as before.
-regional = index.read_weather(NOW)
+regional = asyncio.run(index.read_weather(NOW))
 assert (regional["text"], regional["area"], regional["now"]) == ("Showers", None, None), regional
 assert regional["period"] == "6am to 6pm", regional
 
 # An expired 2-hour forecast must not linger: fall back to regional, keep the live temperature.
-stale = index.read_weather(NOW + timedelta(hours=2), EAST)
+stale = asyncio.run(index.read_weather(NOW + timedelta(hours=2), EAST))
 assert (stale["text"], stale["area"], stale["now"]) == ("Showers", None, 31), stale
 
 # 2-hour and temperature feeds down: regional, no crash.
 feeds[index.NOWCAST_URL] = feeds[index.TEMPERATURE_URL] = None
-down = index.read_weather(NOW, EAST)
+down = asyncio.run(index.read_weather(NOW, EAST))
 assert (down["text"], down["area"], down["now"]) == ("Showers", None, None), down
 
 # Everything down: None, and the template shows the plain title.
 feeds[index.WEATHER_URL] = None
-assert index.read_weather(NOW, EAST) is None
+assert asyncio.run(index.read_weather(NOW, EAST)) is None
 
 print("local weather: all checks passed")
