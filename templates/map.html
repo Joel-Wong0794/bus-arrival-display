@@ -23,10 +23,13 @@
     />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/htmx.org@2"></script>
-    <script src="{{ url_for('static', filename='glide.js') }}"></script>
-    <script src="{{ url_for('static', filename='accuracy.js') }}"></script>
-    <script src="{{ url_for('static', filename='favourites.js') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='map.css') }}" />
+    {# .path keeps these "/static/..." as Flask wrote them. FastAPI's url_for
+       alone gives a full http://host/... URL, and behind Vercel's proxy that
+       can say http on an https page, which the browser blocks. #}
+    <script src="{{ url_for('static', path='glide.js').path }}"></script>
+    <script src="{{ url_for('static', path='accuracy.js').path }}"></script>
+    <script src="{{ url_for('static', path='favourites.js').path }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', path='map.css').path }}" />
     <script>var MODE = {{ mode | tojson }};</script>
   </head>
   <body data-mode="{{ mode }}">
@@ -64,7 +67,7 @@
         {% if weather.icon %}
         <img
           class="wx-icon"
-          src="{{ url_for('static', filename='weather/' ~ weather.icon ~ '.svg') }}"
+          src="{{ url_for('static', path='weather/' ~ weather.icon ~ '.svg').path }}"
           alt=""
           width="40"
           height="40"
@@ -144,7 +147,7 @@
          costs one API call rather than two. -->
     <div
       id="bus-list"
-      hx-get="/map-list?{{ request.query_string.decode() }}"
+      hx-get="/map-list?{{ request.url.query }}"
       hx-trigger="every {{ refresh_seconds }}s, refresh"
       hx-swap="innerHTML"
     >

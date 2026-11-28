@@ -15,6 +15,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "api"))
 sys.path.insert(0, str(ROOT / "scripts"))
 import index  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 from fetch_bus_routes import encode_polyline  # noqa: E402
 
 # Polyline codec: Google's documented example, and a round trip.
@@ -88,10 +89,10 @@ assert n == 0 and abs(along - STEP / 2) <= 3 and stop_m == round(2 * STEP), (n, 
 assert index.fit_route("9", "C", (1.3045, 103.81), ETA) is None  # too far off the road
 
 # /route.json: the whole line with running metres, and every stop on it.
-client = index.app.test_client()
+client = TestClient(index.app)
 route = client.get("/route.json?service=9&pattern=0")
 assert route.status_code == 200 and route.headers["Cache-Control"] == "public, max-age=86400"
-body = route.get_json()
+body = route.json()
 assert [p[2] for p in body["line"]] == [0, round(STEP), round(2 * STEP)], body["line"]
 assert [s[0] for s in body["stops"]] == ["A", "B", "C"] and body["stops"][2][4] == round(2 * STEP)
 for bad in ("service=999&pattern=0", "service=9&pattern=1", "service=9&pattern=x", "service=9"):

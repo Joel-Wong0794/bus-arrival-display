@@ -14,12 +14,13 @@ os.environ.setdefault("API_KEY", "test")
 os.environ.setdefault("BUS_STOP_CODES", "00001")
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "api"))
 import index  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
-response = index.app.test_client().get("/stops.json")
+response = TestClient(index.app).get("/stops.json")
 assert response.status_code == 200, response.status_code
 # Cached for a day: the CDN and the phone answer repeat visits.
 assert response.headers["Cache-Control"] == "public, max-age=86400", response.headers
-stops = response.get_json()["stops"]
+stops = response.json()["stops"]
 
 # Every stop with a position, and only those: an entry with no lat/lon has
 # nowhere to be drawn, so it is left out rather than sent as nulls.

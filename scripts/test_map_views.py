@@ -11,6 +11,7 @@ import sys
 os.environ.setdefault("API_KEY", "test")
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "api"))
 import index  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 # ?stops= parsing: valid five-digit codes, no repeats, in order, capped.
 assert index.valid_stop_codes("84009, 11119,84009,abc,1234,") == ["84009", "11119"]
@@ -36,11 +37,11 @@ def fake_arrival(api_key, code, now):
 
 index.get_bus_arrival = fake_arrival
 index.read_weather = lambda now, place=None: None
-client = index.app.test_client()
+client = TestClient(index.app)
 
 # Start screen: no stop asked for, so no DataMall call and no bus list poll.
 calls.clear()
-page = client.get("/").get_data(as_text=True)
+page = client.get("/").text
 assert calls == [], calls
 assert 'data-mode="start"' in page and 'id="start"' in page
 assert "hx-get=\"/map-list" not in page
@@ -50,32 +51,57 @@ assert client.get("/map").status_code == 200
 hits = [h for h in index.search_stops("blk 402") if h["name"] == "Blk 402"]
 assert len(hits) >= 2 and all(h["road"] for h in hits), hits
 assert len({h["road"] for h in hits}) == len(hits), hits
-results = client.get("/stops?q=blk%20402").get_data(as_text=True)
+results = client.get("/stops?q=blk%20402").text
 assert results.count('class="stop-result-road"') >= 2
 assert index.search_stops("bt batok rd"), "a road name should find its stops"
 
 # One stop: everything running there.
-page = client.get("/map?stop=84009").get_data(as_text=True)
+page = client.get("/map?stop=84009").text
 assert 'data-mode="stop"' in page and 'id="star"' in page
 assert 'class="eyebrow-road"> · ' + index.stop_road("84009") in page
 assert 'class="plate">10<' in page and "Next buses" in page
 
+# Asset URLs stay relative, exactly as Flask wrote them: an absolute http://
+# URL would be blocked as mixed content on the https site.
+assert 'src="/static/glide.js"' in page and 'href="/static/map.css"' in page
+# The 20 s poll asks for the same view the page shows.
+assert 'hx-get="/map-list?stop=84009"' in page
+
+# The weather icon is a static file too, in a subfolder.
+index.read_weather = lambda now, place=None: {
+    "text": "Fair", "icon": "clear-day", "area": None, "now": None, "low": 25,
+    "high": 34, "region": "west", "period": "", "outlook": "",
+}
+assert 'src="/static/weather/clear-day.svg"' in client.get("/map?stop=84009").text
+index.read_weather = lambda now, place=None: None
+
+# Static files: same paths, subfolders included, nothing outside static/.
+assert client.get("/static/glide.js").status_code == 200
+assert client.get("/static/weather/clear-day.svg").status_code == 200
+# Encoded on purpose: the test client would tidy a literal "/static/../" into
+# "/api/..." before sending, so the static handler would never see it.
+assert client.get("/static/%2e%2e/api/index.py").status_code == 404
+
+# Autoescaping is still on: the search box echoes what was typed.
+echoed = client.get("/stops?q=%3Cb%3Ezz").text
+assert "&lt;b&gt;zz" in echoed and "<b>zz" not in echoed
+
 # Favourites: both stops fetched, the 9-minute bus moves to "next up".
 calls.clear()
-page = client.get("/map?stops=84009,11119").get_data(as_text=True)
+page = client.get("/map?stops=84009,11119").text
 assert sorted(calls) == ["11119", "84009"], calls
 assert 'data-mode="favourites"' in page and "2 saved stops" in page
 assert 'class="plate">10<' in page and 'class="plate">20<' not in page
 assert "After that:" in page and "<strong>20</strong> in 9 min" in page
 
 # Nothing within the window: the list and the map pill both say what is next.
-listing = client.get("/map-list?stops=11119").get_data(as_text=True)
+listing = client.get("/map-list?stops=11119").text
 assert "Nothing due in the next" in listing
 assert 'data-status="Nothing in 5 min · next 20 in 9 min"' in listing
 
 # ?stop= wins over ?stops=, and junk falls back to the start screen.
-assert 'data-mode="stop"' in client.get("/map?stop=84009&stops=11119").get_data(as_text=True)
-assert 'data-mode="start"' in client.get("/map?stop=nope&stops=x").get_data(as_text=True)
+assert 'data-mode="stop"' in client.get("/map?stop=84009&stops=11119").text
+assert 'data-mode="start"' in client.get("/map?stop=nope&stops=x").text
 
 # The old dashboard is gone; the debug view takes one stop.
 assert client.get("/arrivals").status_code == 404
