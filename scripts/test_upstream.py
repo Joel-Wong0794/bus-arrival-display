@@ -138,6 +138,42 @@ assert client.get(f"/map-list?stop={NOT_JSON_CODE}").status_code == 200
 debug = client.get(f"/debug?stop={NOT_JSON_CODE}")
 assert debug.status_code == 200 and "Unavailable" in debug.text
 
+async def connection_cap_check() -> None:
+    """A burst of calls never has more than UPSTREAM_MAX_CONNECTIONS open at
+    once: the rest wait their turn. Real sockets on 127.0.0.1, since the mock
+    transport has no connection pool to limit."""
+    open_now, peak = 0, 0
+
+    async def serve(reader, writer):
+        nonlocal open_now, peak
+        open_now += 1
+        peak = max(peak, open_now)
+        try:
+            while await reader.readuntil(b"\r\n\r\n"):
+                await asyncio.sleep(0.05)  # slow enough for calls to pile up
+                writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+                await writer.drain()
+        except (asyncio.IncompleteReadError, ConnectionError):
+            pass
+        finally:
+            open_now -= 1
+            writer.close()
+
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    calls = index.UPSTREAM_MAX_CONNECTIONS * 3
+    async with index.new_client() as capped:
+        replies = await asyncio.gather(
+            *(capped.get(f"http://127.0.0.1:{port}/", timeout=10) for _ in range(calls))
+        )
+    server.close()
+    await server.wait_closed()
+    assert all(r.status_code == 200 for r in replies), "queued calls still complete"
+    assert peak <= index.UPSTREAM_MAX_CONNECTIONS, peak
+
+
+asyncio.run(connection_cap_check())
+
 # Last, because it replaces the fake client: startup opens one shared client
 # and shutdown closes it.
 with TestClient(index.app):
