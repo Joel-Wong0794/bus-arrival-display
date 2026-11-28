@@ -78,7 +78,9 @@ index.read_weather = lambda now, place=None: None
 # Static files: same paths, subfolders included, nothing outside static/.
 assert client.get("/static/glide.js").status_code == 200
 assert client.get("/static/weather/clear-day.svg").status_code == 200
-assert client.get("/static/../api/index.py").status_code == 404
+# Encoded on purpose: the test client would tidy a literal "/static/../" into
+# "/api/..." before sending, so the static handler would never see it.
+assert client.get("/static/%2e%2e/api/index.py").status_code == 404
 
 # Autoescaping is still on: the search box echoes what was typed.
 echoed = client.get("/stops?q=%3Cb%3Ezz").text

@@ -17,7 +17,8 @@ load_dotenv()
 
 # `app` is an ASGI application: the async successor to Flask's WSGI, the
 # interface a server uses to hand requests to Python. Vercel's Python runtime
-# finds it by the same name, and locally `uvicorn index:app` serves it.
+# finds it by the same name, and locally
+# `uvicorn index:app --app-dir api --reload` serves it.
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 app = FastAPI()
 templates = Jinja2Templates(directory=ROOT / "templates")
@@ -1049,7 +1050,7 @@ async def nearest_stop_route(request: Request):
     works inside one. Declaring the body as a parameter instead would make
     FastAPI answer bad JSON with 422, not the 400 the page expects. Safe to run
     on the event loop because nothing here waits on the network: nearest_stop
-    scans the stops in memory in about a millisecond.
+    scans the stops in memory in a few milliseconds.
     """
     try:
         body = await request.json()
