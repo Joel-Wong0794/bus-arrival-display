@@ -72,7 +72,7 @@ that's a separate follow-up PR, not part of the migration.
 ## Branches
 
 All work lives on `feature/fastapi-migration` (cut from `main` at
-`dcf596d`). Each step gets its own short branch, e.g. `fastapi/step-1-port`,
+`dcf596d`, fast-forwarded to `285a32b` on 28 Nov). Each step gets its own short branch, e.g. `fastapi/step-1-port`,
 and a PR into `feature/fastapi-migration`, with its own Vercel preview. One
 final PR merges the migration into `main`.
 
