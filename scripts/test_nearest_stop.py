@@ -12,6 +12,7 @@ os.environ.setdefault("API_KEY", "test")
 os.environ.setdefault("BUS_STOP_CODES", "00001")
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "api"))
 import index  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 index.BUS_STOPS = {
     "11111": {"name": "North Stop", "lat": 1.310, "lon": 103.80},
@@ -27,19 +28,23 @@ assert abs(near["metres"] - 222) <= 2, near
 # Nothing within 2 km (here ~11 km away): no pick.
 assert index.nearest_stop(1.40, 103.80) is None
 
-client = index.app.test_client()
+client = TestClient(index.app)
 ok = client.post("/nearest-stop", json={"lat": 1.309, "lon": 103.80})
-assert ok.status_code == 200 and ok.get_json()["stop"]["code"] == "11111", ok.get_json()
+assert ok.status_code == 200 and ok.json()["stop"]["code"] == "11111", ok.json()
 assert ok.headers["Cache-Control"] == "no-store"
 
 far = client.post("/nearest-stop", json={"lat": 1.40, "lon": 103.80})
-assert far.status_code == 200 and far.get_json() == {"stop": None}
+assert far.status_code == 200 and far.json() == {"stop": None}
 
 # Trust boundary: junk is refused, not crashed on.
 for bad in ({}, {"lat": "x", "lon": 1}, {"lat": 1.3}, {"lat": 95, "lon": 103.8}, {"lat": "nan", "lon": 103.8}):
     response = client.post("/nearest-stop", json=bad)
     assert response.status_code == 400, (bad, response.status_code)
-assert client.post("/nearest-stop", data="not json").status_code == 400
+assert client.post("/nearest-stop", content="not json").status_code == 400
+# Valid JSON that isn't an object is junk too: refused, not a 500.
+for body in ("[1, 2]", "null", '"x"'):
+    response = client.post("/nearest-stop", content=body, headers={"content-type": "application/json"})
+    assert response.status_code == 400, (body, response.status_code)
 
 # GET is not allowed: coordinates must not travel in a URL.
 assert client.get("/nearest-stop?lat=1.3&lon=103.8").status_code == 405

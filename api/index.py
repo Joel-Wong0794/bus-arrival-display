@@ -8,11 +8,22 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, make_response, render_template, request
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 load_dotenv()
 
-app = Flask(__name__, template_folder="../templates", static_folder="../static")
+# `app` is an ASGI application: the async successor to Flask's WSGI, the
+# interface a server uses to hand requests to Python. Vercel's Python runtime
+# finds it by the same name, and locally `uvicorn index:app` serves it.
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+app = FastAPI()
+templates = Jinja2Templates(directory=ROOT / "templates")
+# Serves static/ at the same /static/... URLs Flask did. Named "static" so the
+# templates can still build those URLs with url_for('static', ...).
+app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 # LTA DataMall v3 bus arrival endpoint
 BUS_ARRIVAL_URL = "https://datamall2.mytransport.sg/ltaodataservice/v3/BusArrival"
@@ -995,60 +1006,75 @@ def map_context(now: datetime, args) -> dict:
     return base_context(now)
 
 
-@app.route("/")
-@app.route("/map")
-def bus_map():
+# Routes are plain `def`, not `async def`: FastAPI runs those in a thread pool,
+# so the blocking `requests` calls inside them wait without holding up other
+# requests, just as under Flask. `request: Request` is asked for by type, and
+# FastAPI passes it in.
+@app.get("/", response_class=HTMLResponse)
+@app.get("/map", response_class=HTMLResponse)
+def bus_map(request: Request):
     now = datetime.now(SGT)
-    context = map_context(now, request.args)
+    # query_params has the same .get() as Flask's request.args, so map_context
+    # reads ?stop= and ?stops= unchanged.
+    context = map_context(now, request.query_params)
     # Weather only on the page load, not in the 20s poll: the forecast changes
     # a few times a day. Taken where the map is looking; regional without one.
     focus = context["focus_lat"], context["focus_lon"]
     place = focus if None not in focus else None
-    response = make_response(
-        render_template(
-            "map.html",
-            refresh_seconds=REFRESH_SECONDS,
-            max_favourites=MAX_FAVOURITES,
-            weather=read_weather(now, place),
+    # The request goes to the template too: the page reads its query string,
+    # and url_for needs it to build the /static/... links.
+    return templates.TemplateResponse(
+        request,
+        "map.html",
+        {
+            "refresh_seconds": REFRESH_SECONDS,
+            "max_favourites": MAX_FAVOURITES,
+            "weather": read_weather(now, place),
             **context,
-        )
+        },
+        headers={"Cache-Control": "no-store"},
     )
-    response.headers["Cache-Control"] = "no-store"
-    return response
 
 
 
-@app.route("/nearest-stop", methods=["POST"])
-def nearest_stop_route():
+@app.post("/nearest-stop")
+async def nearest_stop_route(request: Request):
     """{"lat": .., "lon": ..} in, {"stop": {"code", "name", "metres"} | null} out.
 
     POST with a JSON body rather than GET with a query string, so a phone's
     position never lands in a URL — where it would sit in server logs and
     browser history. Nothing here stores it either.
+
+    The one `async def` route: reading the raw body means `await`, which only
+    works inside one. Declaring the body as a parameter instead would make
+    FastAPI answer bad JSON with 422, not the 400 the page expects. Safe to run
+    on the event loop because nothing here waits on the network: nearest_stop
+    scans the stops in memory in about a millisecond.
     """
-    body = request.get_json(silent=True) or {}
+    try:
+        body = await request.json()
+    except ValueError:  # not JSON at all
+        body = {}
     try:
         lat, lon = float(body["lat"]), float(body["lon"])
     except (KeyError, TypeError, ValueError):
-        return {"error": "lat and lon are required numbers"}, 400
+        return JSONResponse({"error": "lat and lon are required numbers"}, status_code=400)
     # Written so NaN and infinity fail too: every comparison with NaN is False.
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-        return {"error": "lat or lon out of range"}, 400
-    response = make_response({"stop": nearest_stop(lat, lon)})
-    response.headers["Cache-Control"] = "no-store"
-    return response
+        return JSONResponse({"error": "lat or lon out of range"}, status_code=400)
+    return JSONResponse({"stop": nearest_stop(lat, lon)}, headers={"Cache-Control": "no-store"})
 
 
-@app.route("/stops")
-def stop_search():
-    query = request.args.get("q", "")
-    response = make_response(
-        render_template(
-            "_stop_results.html", results=search_stops(query), query=query.strip()
-        )
+@app.get("/stops", response_class=HTMLResponse)
+def stop_search(request: Request, q: str = ""):
+    # A parameter with a default *is* the query string: `q` is ?q=, and
+    # FastAPI fills it in (and lists it in /docs). A str, so nothing is refused.
+    return templates.TemplateResponse(
+        request,
+        "_stop_results.html",
+        {"results": search_stops(q), "query": q.strip()},
+        headers={"Cache-Control": "no-store"},
     )
-    response.headers["Cache-Control"] = "no-store"
-    return response
 
 
 # Every stop with a position, as [code, name, lat, lon, road], for the tappable stop
@@ -1064,7 +1090,7 @@ STOP_LIST = [
 ]
 
 
-@app.route("/stops.json")
+@app.get("/stops.json")
 def stop_list():
     """All stops in one download, rather than "stops in this rectangle" per pan.
 
@@ -1073,13 +1099,11 @@ def stop_list():
     of caching costs nothing: Vercel's CDN and the phone answer repeat visits,
     and the function itself is rarely asked.
     """
-    response = make_response({"stops": STOP_LIST})
-    response.headers["Cache-Control"] = "public, max-age=86400"
-    return response
+    return JSONResponse({"stops": STOP_LIST}, headers={"Cache-Control": "public, max-age=86400"})
 
 
-@app.route("/route.json")
-def route_json():
+@app.get("/route.json")
+def route_json(service: str = "", pattern: str = ""):
     """One service's road line and its stops, for drawing a tapped bus's route.
 
     {"line": [[lat, lon, metres], ...], "stops": [[code, name, lat, lon, metres], ...]}
@@ -1087,14 +1111,15 @@ def route_json():
     split it at the bus and at the stop without any geometry of its own.
     Static for the life of the bake, so cached for a day like /stops.json.
     """
-    service = request.args.get("service", "")
     patterns = BUS_ROUTES.get(service)
+    # pattern arrives as a str, not an int, so junk gets this 404 rather than
+    # FastAPI's own 422 for a failed conversion.
     try:
-        n = int(request.args.get("pattern", ""))
+        n = int(pattern)
     except ValueError:
         n = -1
     if not isinstance(patterns, list) or not 0 <= n < len(patterns):
-        return {"error": "unknown service or pattern"}, 404
+        return JSONResponse({"error": "unknown service or pattern"}, status_code=404)
     points, metres = route_line(service, n)
     stops = []
     for code, stop_m in patterns[n]["stops"]:
@@ -1104,42 +1129,42 @@ def route_json():
         stops.append(
             [code, stop_name(code), round(position[0], 5), round(position[1], 5), round(stop_m)]
         )
-    response = make_response(
+    return JSONResponse(
         {
             "line": [[round(p[0], 5), round(p[1], 5), round(m)] for p, m in zip(points, metres)],
             "stops": stops,
-        }
+        },
+        headers={"Cache-Control": "public, max-age=86400"},
     )
-    response.headers["Cache-Control"] = "public, max-age=86400"
-    return response
 
 
-@app.route("/map-list")
-def map_list():
+@app.get("/map-list", response_class=HTMLResponse)
+def map_list(request: Request):
     # The view rides in the query string rather than being stored: it belongs
     # to the tab you are looking at, not to the app.
     now = datetime.now(SGT)
-    response = make_response(
-        render_template("_map_list.html", **map_context(now, request.args))
+    return templates.TemplateResponse(
+        request,
+        "_map_list.html",
+        map_context(now, request.query_params),
+        headers={"Cache-Control": "no-store"},
     )
-    response.headers["Cache-Control"] = "no-store"
-    return response
 
 
-@app.route("/debug")
-def debug():
+@app.get("/debug", response_class=HTMLResponse)
+def debug(request: Request, stop: str | None = None):
     """Raw feed values for one stop (?stop=) or the BUS_STOP_CODES setting."""
     now = datetime.now(SGT)
-    code = valid_stop_code(request.args.get("stop"))
+    code = valid_stop_code(stop)
     stops = [(code, stop_name(code))] if code else STOPS
-    response = make_response(
-        render_template(
-            "_debug.html",
-            stops=fetch_stops(now, stops),
-            updated_at=now.strftime("%H:%M:%S"),
-            now=now.isoformat(),
-            buffer_seconds=BUFFER_SECONDS,
-        )
+    return templates.TemplateResponse(
+        request,
+        "_debug.html",
+        {
+            "stops": fetch_stops(now, stops),
+            "updated_at": now.strftime("%H:%M:%S"),
+            "now": now.isoformat(),
+            "buffer_seconds": BUFFER_SECONDS,
+        },
+        headers={"Cache-Control": "no-store"},
     )
-    response.headers["Cache-Control"] = "no-store"
-    return response
