@@ -73,4 +73,25 @@ assert.equal(Glide.fixAgeS(300), Glide.MAX_FIX_AGE_S);
 const seenAt = s(15);
 assert.equal(Glide.shadowTravelled(600, seenAt - 15_000, s(120), seenAt), 75);
 
+// A cruising pin sits on its shadow, not ~2 s behind it. Replays map.html's
+// tick loop: 2 km in 200 s (10 m/s), ticks every 250 ms, pin starts on the fix.
+{
+  const d0 = 2000, tA = s(200);
+  const run = (target) => {
+    let travelled = 0;
+    for (let now = s(0.25); now <= s(60); now += 250) {
+      travelled += Glide.easeStep(target(now) - travelled, 250);
+    }
+    return Glide.shadowTravelled(d0, T0, tA, s(60)) - travelled; // metres behind
+  };
+  const chasingShadow = run((now) => Glide.shadowTravelled(d0, T0, tA, now));
+  const chasingAim = run((now) => Glide.aimTravelled(d0, T0, tA, now));
+  assert.ok(chasingShadow > 15, `old behaviour trailed by ${chasingShadow} m`); // ~20 m
+  // Within one tick of driving (2.5 m here, ahead): the loop steps every
+  // 250 ms rather than continuously. Shorter than the bus itself.
+  assert.ok(Math.abs(chasingAim) <= 2.5 + 1e-6, `pin off its shadow by ${chasingAim} m`);
+}
+// While the shadow holds short of the stop, the aim holds with it.
+assert.equal(Glide.aimTravelled(600, T0, s(120), s(110)), 600 - Glide.HOLD_M);
+
 console.log("glide.js: all checks passed");

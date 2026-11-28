@@ -130,6 +130,21 @@ var Glide = (function () {
     return [last[0], last[1]];
   }
 
+  /**
+   * Metres the pin should aim for by time `now`: where the shadow will be
+   * CATCHUP_S from now, not where it is. Same arguments as shadowTravelled.
+   *
+   * Why: the pin closes its gap to the target at gap / CATCHUP_S per second.
+   * Chasing a target that moves at v m/s, it settles v * CATCHUP_S behind —
+   * 22 m at 40 km/h, 33 m at 60 km/h, on every bus, all the time (field test,
+   * 28 Nov 2026: riders saw their own bus drawn behind them). Aiming CATCHUP_S
+   * ahead cancels that exactly, so a cruising pin sits on the shadow. When
+   * the shadow stops (the hold short of the stop), the aim stops with it.
+   */
+  function aimTravelled(d0, t0, tA, now) {
+    return shadowTravelled(d0, t0, tA, now + CATCHUP_S * 1000);
+  }
+
   /** Share of the pin-to-shadow gap to close in a tick lasting dtMs. */
   function easeFactor(dtMs) {
     return Math.min(1, Math.max(0, dtMs) / 1000 / CATCHUP_S);
@@ -155,6 +170,8 @@ var Glide = (function () {
     SNAP_BEHIND_M: SNAP_BEHIND_M,
     SNAP_AHEAD_M: SNAP_AHEAD_M,
     shadowTravelled: shadowTravelled,
+    aimTravelled: aimTravelled,
+    CATCHUP_S: CATCHUP_S,
     onNewFix: onNewFix,
     pointAt: pointAt,
     easeFactor: easeFactor,
