@@ -3,5 +3,7 @@ fastapi~=0.165.0
 # request URLs this app uses all come from Starlette, so it is capped too.
 starlette~=1.10
 jinja2~=3.1
-requests
+# The async HTTP client for LTA and NEA: httpx's successor, by the same author,
+# and the library Starlette's test client is built on, so one client serves both.
+httpx2~=2.16
 python-dotenv

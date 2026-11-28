@@ -1,12 +1,13 @@
+import asyncio
+import contextlib
 import functools
 import json
 import math
 import os
 import pathlib
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
-import requests
+import httpx2
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -15,12 +16,40 @@ from fastapi.templating import Jinja2Templates
 
 load_dotenv()
 
+# One HTTP client for every upstream call, opened when the app starts. A shared
+# client keeps its connections open between calls, so a call that follows soon
+# after another skips the TCP and TLS handshake. None until startup has run, so
+# a server that skipped startup fails loudly instead of quietly working without it.
+http_client: httpx2.AsyncClient | None = None
+
+
+def new_client(**kwargs) -> httpx2.AsyncClient:
+    """The client's settings in one place, so the tests build theirs the same way.
+
+    Redirects are followed because requests followed them by default: without
+    this, an upstream that moved its URL would read as an outage.
+    """
+    return httpx2.AsyncClient(follow_redirects=True, **kwargs)
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Runs once per server process: the code before `yield` on startup, the code
+    after it on shutdown, where the client closes its open connections."""
+    global http_client
+    http_client = new_client()
+    try:
+        yield
+    finally:
+        await http_client.aclose()
+
+
 # `app` is an ASGI application: the async successor to Flask's WSGI, the
 # interface a server uses to hand requests to Python. Vercel's Python runtime
 # finds it by the same name, and locally
 # `uvicorn index:app --app-dir api --reload` serves it.
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 templates = Jinja2Templates(directory=ROOT / "templates")
 # Serves static/ at the same /static/... URLs Flask did. Named "static" so the
 # templates can still build those URLs with url_for('static', ...).
@@ -142,7 +171,7 @@ TEMPERATURE_TTL_SECONDS = int(os.environ.get("TEMPERATURE_TTL_SECONDS", "300"))
 _feed_cache: dict = {}
 
 
-def fetch_feed(url: str, now: datetime, ttl_seconds: int) -> dict | None:
+async def fetch_feed(url: str, now: datetime, ttl_seconds: int) -> dict | None:
     """A data.gov.sg feed's "data" object, cached for ttl_seconds.
 
     Caches the raw feed rather than a rendered answer, for two reasons: every
@@ -158,10 +187,13 @@ def fetch_feed(url: str, now: datetime, ttl_seconds: int) -> dict | None:
     if WEATHER_API_KEY:
         headers["x-api-key"] = WEATHER_API_KEY
     try:
-        response = requests.get(url, headers=headers, timeout=5)
+        # `await` hands control back to the event loop (the one loop that runs
+        # every request on this instance) while the reply is on its way, so
+        # other requests keep moving instead of waiting behind this one.
+        response = await http_client.get(url, headers=headers, timeout=5)
         response.raise_for_status()
         data = response.json()["data"]
-    except (requests.RequestException, ValueError, KeyError, TypeError):
+    except (httpx2.HTTPError, ValueError, KeyError, TypeError):
         # Serve the last good copy rather than nothing: a slightly old reading
         # beats a blank header. None only if this instance never got one.
         return entry["data"] if entry else None
@@ -170,9 +202,9 @@ def fetch_feed(url: str, now: datetime, ttl_seconds: int) -> dict | None:
     return data
 
 
-def weather_record(now: datetime) -> dict | None:
+async def weather_record(now: datetime) -> dict | None:
     """The raw 24-hour NEA record (regional forecast and the day's low-high)."""
-    data = fetch_feed(WEATHER_URL, now, WEATHER_TTL_SECONDS)
+    data = await fetch_feed(WEATHER_URL, now, WEATHER_TTL_SECONDS)
     try:
         return data["records"][0]
     except (TypeError, KeyError, IndexError):
@@ -196,14 +228,14 @@ def nearest_named(places: list, lat: float, lon: float, position) -> dict | None
     return best
 
 
-def local_forecast(now: datetime, lat: float, lon: float) -> dict | None:
+async def local_forecast(now: datetime, lat: float, lon: float) -> dict | None:
     """NEA's 2-hour forecast for the named area nearest (lat, lon).
 
     None when the feed is down, the area has no forecast, or the forecast has
     expired (a feed that stopped updating must not keep showing "Fair" from
     hours ago) — the caller then falls back to the 24-hour regional one.
     """
-    data = fetch_feed(NOWCAST_URL, now, WEATHER_TTL_SECONDS)
+    data = await fetch_feed(NOWCAST_URL, now, WEATHER_TTL_SECONDS)
     if not data:
         return None
     area = nearest_named(
@@ -228,13 +260,13 @@ def local_forecast(now: datetime, lat: float, lon: float) -> dict | None:
     return {"text": text, "area": area["name"], "period": item["valid_period"].get("text")}
 
 
-def local_temperature(now: datetime, lat: float, lon: float) -> int | None:
+async def local_temperature(now: datetime, lat: float, lon: float) -> int | None:
     """The latest reading at the weather station nearest (lat, lon), whole °C.
 
     Only stations that actually reported in the latest batch are considered:
     one offline station must not blank the temperature when a neighbour has it.
     """
-    data = fetch_feed(TEMPERATURE_URL, now, TEMPERATURE_TTL_SECONDS)
+    data = await fetch_feed(TEMPERATURE_URL, now, TEMPERATURE_TTL_SECONDS)
     if not data:
         return None
     try:
@@ -256,7 +288,7 @@ def local_temperature(now: datetime, lat: float, lon: float) -> int | None:
         return None
 
 
-def read_weather(now: datetime, place: tuple | None = None) -> dict | None:
+async def read_weather(now: datetime, place: tuple | None = None) -> dict | None:
     """What it's doing outside, or None if NEA can't be reached at all.
 
     place is where the map is looking: the chosen stop, or home. Since the
@@ -271,7 +303,15 @@ def read_weather(now: datetime, place: tuple | None = None) -> dict | None:
     garnish on a page whose job is bus times. An NEA outage must not take the
     departure board down with it.
     """
-    record = weather_record(now) or {}
+    # The three feeds don't depend on one another, so they are asked together:
+    # `gather` starts them all and waits once, for the slowest, not their sum.
+    if place:
+        record, local, now_c = await asyncio.gather(
+            weather_record(now), local_forecast(now, *place), local_temperature(now, *place)
+        )
+    else:
+        record, local, now_c = await weather_record(now), None, None
+    record = record or {}
     general = record.get("general", {})
     temperature = general.get("temperature", {})
     period = current_period(record.get("periods", []), now) or {}
@@ -281,8 +321,6 @@ def read_weather(now: datetime, place: tuple | None = None) -> dict | None:
         "forecast", {}
     )
 
-    local = local_forecast(now, *place) if place else None
-    now_c = local_temperature(now, *place) if place else None
     text = local["text"] if local else regional.get("text")
     if not text:
         return None
@@ -335,7 +373,7 @@ BUS_STOPS_URL = "https://datamall2.mytransport.sg/ltaodataservice/BusStops"
 _position_cache: dict[str, tuple[float, float] | None] = {}
 
 
-def fetch_stop_position(code: str) -> tuple[float, float] | None:
+async def fetch_stop_position(code: str) -> tuple[float, float] | None:
     """Ask DataMall where one stop is. None on anything unexpected.
 
     Only reached when data/bus_stops.json has no position for the stop, which a
@@ -347,7 +385,7 @@ def fetch_stop_position(code: str) -> tuple[float, float] | None:
     map page that will not load.
     """
     try:
-        response = requests.get(
+        response = await http_client.get(
             BUS_STOPS_URL,
             headers={"AccountKey": API_KEY, "accept": "application/json"},
             params={"BusStopCode": code},
@@ -355,7 +393,7 @@ def fetch_stop_position(code: str) -> tuple[float, float] | None:
         )
         response.raise_for_status()
         rows = response.json().get("value", [])
-    except (requests.RequestException, ValueError):
+    except (httpx2.HTTPError, ValueError):
         return None
     for row in rows:
         # Checked rather than assumed: an unsupported filter returns the first
@@ -383,17 +421,32 @@ def baked_position(code: str) -> tuple[float, float] | None:
     return (lat, lon) if lat is not None and lon is not None else None
 
 
-def stop_position(code: str) -> tuple[float, float] | None:
-    """Where one stop is, from the baked lookup or, failing that, from the feed.
+async def ensure_positions(codes: list[str]) -> None:
+    """Looks up, all at once, the position of each stop the baked file has none for.
 
-    For the single focused stop only — see baked_position for bulk lookups.
+    Called before a view is built, so stop_position can stay a plain lookup:
+    it is used deep inside the CPU-only work that fits buses to their routes,
+    which has no network wait to overlap. With an up-to-date bus_stops.json
+    there is nothing to ask and this returns straight away.
+    """
+    missing = [
+        code for code in dict.fromkeys(codes)  # dict.fromkeys: no repeats, order kept
+        if baked_position(code) is None and code not in _position_cache
+    ]
+    found = await asyncio.gather(*(fetch_stop_position(c) for c in missing))
+    _position_cache.update(zip(missing, found))
+
+
+def stop_position(code: str) -> tuple[float, float] | None:
+    """Where one stop is, from the baked lookup or, failing that, from the feed's
+    answer that ensure_positions fetched. None if neither knows.
+
+    For the stops a view is about only — see baked_position for bulk lookups.
     """
     position = baked_position(code)
     if position is not None:
         return position
-    if code not in _position_cache:
-        _position_cache[code] = fetch_stop_position(code)
-    return _position_cache[code]
+    return _position_cache.get(code)
 
 
 def destination_label(next_bus: dict) -> str | None:
@@ -749,7 +802,7 @@ def stop_road(code: str) -> str | None:
     return BUS_STOPS.get(code, {}).get("road")
 
 
-def get_bus_arrival(
+async def get_bus_arrival(
     api_key: str, stop_code: str, now: datetime
 ) -> list[tuple[str, list[dict]]]:
     """Returns [(service_no, [bus, ...]), ...] for a given bus stop.
@@ -758,7 +811,7 @@ def get_bus_arrival(
     epoch milliseconds so the browser can count it down between polls, and the
     raw feed values for the debug view.
     """
-    response = requests.get(
+    response = await http_client.get(
         BUS_ARRIVAL_URL,
         headers={"AccountKey": api_key, "accept": "application/json"},
         params={"BusStopCode": stop_code},
@@ -808,27 +861,26 @@ def get_bus_arrival(
     return results
 
 
-def fetch_stops(now: datetime, stops: list[tuple[str, str]]) -> list[dict]:
-    """[(code, name), ...] -> each stop's services, fetched in parallel.
+async def fetch_stops(now: datetime, stops: list[tuple[str, str]]) -> list[dict]:
+    """[(code, name), ...] -> each stop's services, fetched side by side.
 
     One DataMall call per stop; side by side, six favourites cost about as long
-    as one instead of six in a row.
+    as one instead of six in a row. gather keeps the order asked for.
     """
 
-    def one(stop: tuple[str, str]) -> dict:
+    async def one(stop: tuple[str, str]) -> dict:
         code, name = stop
         try:
-            services = get_bus_arrival(API_KEY, code, now)
+            services = await get_bus_arrival(API_KEY, code, now)
             error = None
-        except requests.RequestException:
+        # ValueError too: a reply that isn't JSON (an HTML error page) raises a
+        # plain ValueError here, which requests used to report as a RequestException.
+        except (httpx2.HTTPError, ValueError):
             services = []
             error = "Unavailable"
         return {"code": code, "name": name, "services": services, "error": error}
 
-    if not stops:
-        return []
-    with ThreadPoolExecutor(max_workers=len(stops)) as pool:
-        return list(pool.map(one, stops))
+    return list(await asyncio.gather(*(one(stop) for stop in stops)))
 
 
 def collect_map_buses(
@@ -943,13 +995,14 @@ def place_of(code: str) -> dict | None:
     }
 
 
-def stop_context(now: datetime, code: str) -> dict:
+async def stop_context(now: datetime, code: str) -> dict:
     """One picked stop: everything running there, distances measured from it.
 
     The arrival window goes: it exists to answer "leave now" across several
     stops, which is not the question when you have gone looking for one.
     """
-    stops_data = fetch_stops(now, [(code, stop_name(code))])
+    await ensure_positions([code])
+    stops_data = await fetch_stops(now, [(code, stop_name(code))])
     origin = stop_position(code)
     buses = collect_map_buses(stops_data, origin)
     place = place_of(code)
@@ -965,14 +1018,15 @@ def stop_context(now: datetime, code: str) -> dict:
     }
 
 
-def favourites_context(now: datetime, codes: list[str]) -> dict:
+async def favourites_context(now: datetime, codes: list[str]) -> dict:
     """The visitor's saved stops, together: what is due at any of them soon.
 
     Each bus is measured from the stop it is heading to (by road where its
     route fits), so "600 m by road" means the same thing in every row whichever
     favourite it belongs to.
     """
-    stops_data = fetch_stops(now, [(code, stop_name(code)) for code in codes])
+    await ensure_positions(codes)
+    stops_data = await fetch_stops(now, [(code, stop_name(code)) for code in codes])
     buses = []
     for stop in stops_data:
         buses.extend(collect_map_buses([stop], stop_position(stop["code"])))
@@ -995,33 +1049,64 @@ def favourites_context(now: datetime, codes: list[str]) -> dict:
     }
 
 
-def map_context(now: datetime, args) -> dict:
+async def map_context(now: datetime, args) -> dict:
     """?stop= wins over ?stops=; neither is the start screen, where the browser
     decides between its saved favourites and the stop nearest the phone."""
     code = valid_stop_code(args.get("stop"))
     if code:
-        return stop_context(now, code)
+        return await stop_context(now, code)
     codes = valid_stop_codes(args.get("stops"))
     if codes:
-        return favourites_context(now, codes)
+        return await favourites_context(now, codes)
     return base_context(now)
 
 
-# Routes are plain `def`, not `async def`: FastAPI runs those in a thread pool,
-# so the blocking `requests` calls inside them wait without holding up other
-# requests, just as under Flask. `request: Request` is asked for by type, and
-# FastAPI passes it in.
+def view_codes(args) -> list[str]:
+    """The stops a /map view is about, by map_context's rule: ?stop= wins over
+    ?stops=, and neither (the start screen) is no stops."""
+    code = valid_stop_code(args.get("stop"))
+    return [code] if code else valid_stop_codes(args.get("stops"))
+
+
+# How long a page load waits for the weather before going without it.
+WEATHER_BUDGET_SECONDS = 1.5
+
+
+async def weather_in_time(now: datetime, place: tuple | None) -> dict | None:
+    """read_weather, or None if NEA hasn't answered within the budget.
+
+    The weather is a garnish on a page whose job is bus times, so a slow NEA
+    costs the page its chip, never its buses. wait_for cancels the unfinished
+    fetch, so nothing is left running after the page has gone out.
+    """
+    try:
+        return await asyncio.wait_for(read_weather(now, place), WEATHER_BUDGET_SECONDS)
+    except TimeoutError:
+        return None
+
+
+# Routes that call upstream are `async def`: FastAPI runs those on the event
+# loop, and each `await` on the network lets other requests run meanwhile.
+# Routes that only work in memory stay plain `def`, which FastAPI runs in a
+# thread pool instead, so even a slow one never stalls the loop.
+# `request: Request` is asked for by type, and FastAPI passes it in.
 @app.get("/", response_class=HTMLResponse)
 @app.get("/map", response_class=HTMLResponse)
-def bus_map(request: Request):
+async def bus_map(request: Request):
     now = datetime.now(SGT)
     # query_params has the same .get() as Flask's request.args, so map_context
     # reads ?stop= and ?stops= unchanged.
-    context = map_context(now, request.query_params)
+    args = request.query_params
     # Weather only on the page load, not in the 20s poll: the forecast changes
-    # a few times a day. Taken where the map is looking; regional without one.
-    focus = context["focus_lat"], context["focus_lon"]
-    place = focus if None not in focus else None
+    # a few times a day. Taken where the map is looking (the first stop that
+    # has a position); regional without one. Worked out from the stop codes
+    # alone, before any arrivals, so that both can be asked for at once.
+    codes = view_codes(args)
+    await ensure_positions(codes)
+    place = next((p for p in map(stop_position, codes) if p is not None), None)
+    context, weather = await asyncio.gather(
+        map_context(now, args), weather_in_time(now, place)
+    )
     # The request goes to the template too: the page reads its query string,
     # and url_for needs it to build the /static/... links.
     return templates.TemplateResponse(
@@ -1030,7 +1115,7 @@ def bus_map(request: Request):
         {
             "refresh_seconds": REFRESH_SECONDS,
             "max_favourites": MAX_FAVOURITES,
-            "weather": read_weather(now, place),
+            "weather": weather,
             **context,
         },
         headers={"Cache-Control": "no-store"},
@@ -1046,8 +1131,8 @@ async def nearest_stop_route(request: Request):
     position never lands in a URL — where it would sit in server logs and
     browser history. Nothing here stores it either.
 
-    The one `async def` route: reading the raw body means `await`, which only
-    works inside one. Declaring the body as a parameter instead would make
+    `async def` for a different reason from the others: reading the raw body
+    means `await`, which only works inside one. Declaring the body as a parameter instead would make
     FastAPI answer bad JSON with 422, not the 400 the page expects. Safe to run
     on the event loop because nothing here waits on the network: nearest_stop
     scans the stops in memory in a few milliseconds.
@@ -1140,20 +1225,20 @@ def route_json(service: str = "", pattern: str = ""):
 
 
 @app.get("/map-list", response_class=HTMLResponse)
-def map_list(request: Request):
+async def map_list(request: Request):
     # The view rides in the query string rather than being stored: it belongs
     # to the tab you are looking at, not to the app.
     now = datetime.now(SGT)
     return templates.TemplateResponse(
         request,
         "_map_list.html",
-        map_context(now, request.query_params),
+        await map_context(now, request.query_params),
         headers={"Cache-Control": "no-store"},
     )
 
 
 @app.get("/debug", response_class=HTMLResponse)
-def debug(request: Request, stop: str | None = None):
+async def debug(request: Request, stop: str | None = None):
     """Raw feed values for one stop (?stop=) or the BUS_STOP_CODES setting."""
     now = datetime.now(SGT)
     code = valid_stop_code(stop)
@@ -1162,7 +1247,7 @@ def debug(request: Request, stop: str | None = None):
         request,
         "_debug.html",
         {
-            "stops": fetch_stops(now, stops),
+            "stops": await fetch_stops(now, stops),
             "updated_at": now.strftime("%H:%M:%S"),
             "now": now.isoformat(),
             "buffer_seconds": BUFFER_SECONDS,
