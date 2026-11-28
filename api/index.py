@@ -1061,6 +1061,30 @@ async def map_context(now: datetime, args) -> dict:
     return base_context(now)
 
 
+def view_codes(args) -> list[str]:
+    """The stops a /map view is about, by map_context's rule: ?stop= wins over
+    ?stops=, and neither (the start screen) is no stops."""
+    code = valid_stop_code(args.get("stop"))
+    return [code] if code else valid_stop_codes(args.get("stops"))
+
+
+# How long a page load waits for the weather before going without it.
+WEATHER_BUDGET_SECONDS = 1.5
+
+
+async def weather_in_time(now: datetime, place: tuple | None) -> dict | None:
+    """read_weather, or None if NEA hasn't answered within the budget.
+
+    The weather is a garnish on a page whose job is bus times, so a slow NEA
+    costs the page its chip, never its buses. wait_for cancels the unfinished
+    fetch, so nothing is left running after the page has gone out.
+    """
+    try:
+        return await asyncio.wait_for(read_weather(now, place), WEATHER_BUDGET_SECONDS)
+    except TimeoutError:
+        return None
+
+
 # Routes that call upstream are `async def`: FastAPI runs those on the event
 # loop, and each `await` on the network lets other requests run meanwhile.
 # Routes that only work in memory stay plain `def`, which FastAPI runs in a
@@ -1072,11 +1096,17 @@ async def bus_map(request: Request):
     now = datetime.now(SGT)
     # query_params has the same .get() as Flask's request.args, so map_context
     # reads ?stop= and ?stops= unchanged.
-    context = await map_context(now, request.query_params)
+    args = request.query_params
     # Weather only on the page load, not in the 20s poll: the forecast changes
-    # a few times a day. Taken where the map is looking; regional without one.
-    focus = context["focus_lat"], context["focus_lon"]
-    place = focus if None not in focus else None
+    # a few times a day. Taken where the map is looking (the first stop that
+    # has a position); regional without one. Worked out from the stop codes
+    # alone, before any arrivals, so that both can be asked for at once.
+    codes = view_codes(args)
+    await ensure_positions(codes)
+    place = next((p for p in map(stop_position, codes) if p is not None), None)
+    context, weather = await asyncio.gather(
+        map_context(now, args), weather_in_time(now, place)
+    )
     # The request goes to the template too: the page reads its query string,
     # and url_for needs it to build the /static/... links.
     return templates.TemplateResponse(
@@ -1085,7 +1115,7 @@ async def bus_map(request: Request):
         {
             "refresh_seconds": REFRESH_SECONDS,
             "max_favourites": MAX_FAVOURITES,
-            "weather": await read_weather(now, place),
+            "weather": weather,
             **context,
         },
         headers={"Cache-Control": "no-store"},

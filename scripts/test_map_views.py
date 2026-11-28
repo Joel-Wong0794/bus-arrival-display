@@ -4,9 +4,11 @@ is replaced with a canned answer.
 Run: python scripts/test_map_views.py
 """
 
+import asyncio
 import os
 import pathlib
 import sys
+import time
 
 os.environ.setdefault("API_KEY", "test")
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "api"))
@@ -81,6 +83,59 @@ assert 'hx-get="/map-list?stop=84009"' in page
 # The weather icon is a static file too, in a subfolder.
 index.read_weather = fair_weather
 assert 'src="/static/weather/clear-day.svg"' in client.get("/map?stop=84009").text
+index.read_weather = no_weather
+
+
+def timed_map(path: str) -> tuple[float, str]:
+    started = time.perf_counter()
+    text = client.get(path).text
+    return time.perf_counter() - started, text
+
+
+async def slow_arrival(api_key, code, now):
+    await asyncio.sleep(0.4)
+    return await fake_arrival(api_key, code, now)
+
+
+def weather_after(seconds: float):
+    async def slow_weather(now, place=None):
+        await asyncio.sleep(seconds)
+        return await fair_weather(now, place)
+    return slow_weather
+
+
+# Arrivals and weather are asked together: two 0.4 s waits cost one, not two.
+index.get_bus_arrival, index.read_weather = slow_arrival, weather_after(0.4)
+elapsed, page = timed_map("/map?stop=84009")
+assert elapsed < 0.7, elapsed
+assert 'class="plate">10<' in page and 'class="wx"' in page
+
+# A slow NEA costs the page its weather chip, never its buses.
+index.get_bus_arrival, index.read_weather = fake_arrival, weather_after(5)
+elapsed, page = timed_map("/map?stop=84009")
+assert elapsed < index.WEATHER_BUDGET_SECONDS + 0.5, elapsed
+assert 'class="plate">10<' in page and 'class="wx"' not in page
+
+# The weather is taken where the map looks: the stop, else the first favourite.
+places = []
+
+
+async def record_place(now, place=None):
+    places.append(place)
+    return None
+
+
+index.read_weather = record_place
+for path, expected in [
+    ("/map?stop=84009", index.stop_position("84009")),
+    ("/map?stops=11119,84009", index.stop_position("11119")),
+    ("/map?stop=84009&stops=11119", index.stop_position("84009")),
+    ("/", None),
+]:
+    assert expected is not None or path == "/", "the check needs baked positions"
+    places.clear()
+    client.get(path)
+    assert places == [expected], (path, places, expected)
 index.read_weather = no_weather
 
 # Static files: same paths, subfolders included, nothing outside static/.
