@@ -23,13 +23,25 @@ load_dotenv()
 http_client: httpx2.AsyncClient | None = None
 
 
+# At most this many upstream calls in flight per instance; the rest wait their
+# turn. LTA publishes no rate limit, but bursts of 100+ simultaneous calls got
+# 500s back and then a temporary block from its CDN. 20 still covers three
+# viewers' six favourites at once, and a call left waiting past its timeout
+# shows as "Unavailable" like any other failure.
+UPSTREAM_MAX_CONNECTIONS = 20
+
+
 def new_client(**kwargs) -> httpx2.AsyncClient:
     """The client's settings in one place, so the tests build theirs the same way.
 
     Redirects are followed because requests followed them by default: without
     this, an upstream that moved its URL would read as an outage.
     """
-    return httpx2.AsyncClient(follow_redirects=True, **kwargs)
+    limits = httpx2.Limits(
+        max_connections=UPSTREAM_MAX_CONNECTIONS,
+        max_keepalive_connections=UPSTREAM_MAX_CONNECTIONS,
+    )
+    return httpx2.AsyncClient(follow_redirects=True, limits=limits, **kwargs)
 
 
 @contextlib.asynccontextmanager
